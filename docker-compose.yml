@@ -1,0 +1,20 @@
+services:
+  saovs-private-server:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      SAOVS_DB: /data/runtime/saovs.sqlite3
+      SAOVS_LOG_DIR: /data/runtime/logs
+      SAOVS_CONTENT_ROOT: /data/content/files
+      SAOVS_ASSET_BASE: ${SAOVS_ASSET_BASE:-https://assets-os.saovs.channel.or.jp/}
+      SAOVS_ASSET_HOSTS: ${SAOVS_ASSET_HOSTS:-assets-os.saovs.channel.or.jp}
+      SAOVS_ASSET_VER: ${SAOVS_ASSET_VER:-30000}
+      SAOVS_MASTER_DATA_VER: ${SAOVS_MASTER_DATA_VER:-30000}
+      SAOVS_LOCALIZE_DATA_VER: ${SAOVS_LOCALIZE_DATA_VER:-30000}
+      SAOVS_ADMIN_TOKEN: ${SAOVS_ADMIN_TOKEN:-change-this-before-public-deploy}
+    volumes:
+      - ./runtime:/data/runtime
+      - ./content/files:/data/content/files:ro
+

@@ -1,0 +1,15 @@
+.git
+.venv
+__pycache__
+**/__pycache__
+*.pyc
+runtime
+content/files
+certs
+*.log
+*.sqlite3
+*.db-shm
+*.db-wal
+.env
+Thumbs.db
+

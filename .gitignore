@@ -1,0 +1,22 @@
+__pycache__/
+**/__pycache__/
+*.pyc
+.venv/
+
+# Runtime state and generated output
+runtime/
+*.log
+*.sqlite3
+*.db-shm
+*.db-wal
+
+# Large game content. Host this on disk/object storage/CDN instead of Git.
+content/files/
+
+# Local TLS material. Use real deployment secrets/certificates on the host.
+certs/
+
+# Local editor/OS noise
+.env
+.DS_Store
+Thumbs.db
