@@ -11,7 +11,7 @@ runtime/
 *.db-wal
 
 # Large game content. Host this on disk/object storage/CDN instead of Git.
-content/
+content/SAOVS
 
 # Local TLS material. Use real deployment secrets/certificates on the host.
 certs/
