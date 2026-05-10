@@ -20,7 +20,7 @@ $Key = Join-Path $Root "certs\saovs_api.key"
 New-Item -ItemType Directory -Force -Path $Logs | Out-Null
 
 if ([string]::IsNullOrWhiteSpace($ContentRoot)) {
-    $ContentRoot = Join-Path $Root "content\files"
+    $ContentRoot = Join-Path $Root "content\SAOVS\data1\com.bandainamcoent.saovsww\files"
 }
 
 function Assert-PortAvailable {
