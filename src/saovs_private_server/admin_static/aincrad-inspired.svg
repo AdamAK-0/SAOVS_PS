@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1000" role="img" aria-label="Abstract floating castle and sword backdrop">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#161b2a"/>
+      <stop offset="0.46" stop-color="#0b1120"/>
+      <stop offset="1" stop-color="#130a12"/>
+    </linearGradient>
+    <linearGradient id="ring" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#e84f5c" stop-opacity="0.14"/>
+      <stop offset="0.48" stop-color="#e9b95b" stop-opacity="0.28"/>
+      <stop offset="1" stop-color="#36d0c3" stop-opacity="0.16"/>
+    </linearGradient>
+    <linearGradient id="blade" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f9fbff" stop-opacity="0.76"/>
+      <stop offset="0.5" stop-color="#75a7ff" stop-opacity="0.3"/>
+      <stop offset="1" stop-color="#e84f5c" stop-opacity="0.2"/>
+    </linearGradient>
+    <filter id="soft">
+      <feGaussianBlur stdDeviation="10"/>
+    </filter>
+  </defs>
+  <rect width="1600" height="1000" fill="url(#sky)"/>
+  <path d="M-80 800 C220 650 420 770 650 640 C900 500 1120 570 1370 420 C1510 336 1610 350 1690 380 L1690 1060 L-80 1060 Z" fill="#07090f" opacity="0.72"/>
+  <ellipse cx="895" cy="440" rx="420" ry="88" fill="none" stroke="url(#ring)" stroke-width="30" transform="rotate(-13 895 440)"/>
+  <ellipse cx="895" cy="440" rx="280" ry="58" fill="none" stroke="#cad4e5" stroke-opacity="0.12" stroke-width="10" transform="rotate(-13 895 440)"/>
+  <g opacity="0.68">
+    <path d="M780 192 L820 108 L862 192 L920 230 L880 254 L895 352 L745 352 L760 254 L720 230 Z" fill="#182238" stroke="#e9b95b" stroke-opacity="0.22"/>
+    <path d="M642 330 L680 250 L720 330 L730 430 L632 430 Z" fill="#121a2d" stroke="#75a7ff" stroke-opacity="0.18"/>
+    <path d="M940 322 L980 236 L1022 322 L1038 440 L922 440 Z" fill="#11192a" stroke="#36d0c3" stroke-opacity="0.18"/>
+    <path d="M706 400 H966 L1012 558 H650 Z" fill="#0f1626" stroke="#cad4e5" stroke-opacity="0.14"/>
+    <path d="M744 452 H918 L946 556 H716 Z" fill="#0a0f1c" opacity="0.9"/>
+    <path d="M800 402 L832 374 L864 402 L856 558 H808 Z" fill="#1d2942" opacity="0.85"/>
+  </g>
+  <g transform="translate(1198 140) rotate(26)">
+    <path d="M34 0 L54 0 L47 520 L41 560 L35 520 Z" fill="url(#blade)"/>
+    <path d="M8 538 H80 L80 566 H8 Z" fill="#e9b95b" opacity="0.58"/>
+    <path d="M34 566 H54 L62 684 H26 Z" fill="#141a29"/>
+  </g>
+  <g filter="url(#soft)" opacity="0.42">
+    <circle cx="310" cy="220" r="80" fill="#e84f5c"/>
+    <circle cx="1260" cy="320" r="76" fill="#36d0c3"/>
+    <circle cx="1020" cy="170" r="52" fill="#e9b95b"/>
+  </g>
+  <g opacity="0.28" stroke="#ffffff" stroke-width="1">
+    <path d="M180 180 H540"/>
+    <path d="M220 230 H440"/>
+    <path d="M1080 670 H1480"/>
+    <path d="M1120 718 H1360"/>
+  </g>
+</svg>

@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SAOVS Private Ops</title>
+  <link rel="icon" href="/admin/assets/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/admin/assets/dashboard.css">
+</head>
+<body>
+  <div class="backdrop" aria-hidden="true"></div>
+  <div class="energy-rail" aria-hidden="true"></div>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <a class="brand" href="/admin" aria-label="SAOVS Private Ops">
+        <span class="brand-mark">SA</span>
+        <span>
+          <span class="brand-kicker">SAOVS</span>
+          <strong>Private Ops</strong>
+        </span>
+      </a>
+
+      <div class="sidebar-visual" aria-hidden="true">
+        <span class="visual-ring"></span>
+        <span class="visual-blade"></span>
+        <span class="visual-core">VS</span>
+      </div>
+
+      <nav class="nav-stack" aria-label="Admin sections">
+        <button class="nav-item active" type="button" data-scroll-target="overview">
+          <span class="nav-dot"></span>
+          Overview
+        </button>
+        <button class="nav-item" type="button" data-scroll-target="logs">
+          <span class="nav-dot"></span>
+          Logs
+        </button>
+        <button class="nav-item" type="button" data-scroll-target="players">
+          <span class="nav-dot"></span>
+          Players
+        </button>
+      </nav>
+
+      <div class="sidebar-card">
+        <span class="label">Server State</span>
+        <strong id="serverState">Checking</strong>
+        <span id="serverPath" class="muted truncate">-</span>
+      </div>
+    </aside>
+
+    <main class="workspace">
+      <header class="topbar">
+        <div>
+          <span class="eyebrow">Admin Dashboard</span>
+          <h1>Command Deck</h1>
+        </div>
+        <div class="top-actions">
+          <label class="token-field">
+            <span>Token</span>
+            <input id="tokenInput" type="password" autocomplete="off" placeholder="Admin token">
+          </label>
+          <button id="saveTokenBtn" class="btn secondary" type="button" title="Save token">
+            <span class="btn-icon">+</span>
+            Save
+          </button>
+          <button id="refreshBtn" class="btn" type="button" title="Refresh dashboard">
+            <span class="btn-icon">R</span>
+            Refresh
+          </button>
+        </div>
+      </header>
+
+      <section class="ops-hero" aria-label="Operations deck">
+        <div class="hero-copy">
+          <span class="eyebrow">Aincrad Control Room</span>
+          <h2>SAOVS Private Server</h2>
+          <p class="hero-subtitle">Live routing, account state, asset checks, and encrypted frame traces in one view.</p>
+          <div class="hero-chips">
+            <span class="hero-chip"><span class="chip-light"></span><strong id="heroStatus">Checking</strong><span>system</span></span>
+            <span class="hero-chip"><span class="chip-light gold"></span><strong id="heroLogs">0</strong><span>logs</span></span>
+            <span class="hero-chip"><span class="chip-light teal"></span><strong id="heroAssets">-</strong><span>assets</span></span>
+          </div>
+        </div>
+        <div class="hero-media" aria-hidden="true">
+          <div class="media-card">
+            <span class="media-label">SAOVS</span>
+            <span class="media-title">Link Start</span>
+          </div>
+          <div class="hero-orbit orbit-one"></div>
+          <div class="hero-orbit orbit-two"></div>
+          <div class="hero-sword"></div>
+        </div>
+      </section>
+
+      <section id="overview" class="overview-grid" aria-label="Server overview">
+        <article class="stat-card accent-red">
+          <span class="label">Status</span>
+          <strong id="statusValue">-</strong>
+          <span id="statusMeta" class="muted">Waiting for server</span>
+        </article>
+        <article class="stat-card accent-gold">
+          <span class="label">Visible Logs</span>
+          <strong id="logCountValue">0</strong>
+          <span id="logCountMeta" class="muted">0 total</span>
+        </article>
+        <article class="stat-card accent-teal">
+          <span class="label">Players</span>
+          <strong id="playerCountValue">0</strong>
+          <span id="playerCountMeta" class="muted">0 sessions</span>
+        </article>
+        <article class="stat-card accent-silver">
+          <span class="label">Assets</span>
+          <strong id="assetValue">-</strong>
+          <span id="assetMeta" class="muted truncate">-</span>
+        </article>
+      </section>
+
+      <section id="logs" class="panel log-panel">
+        <div class="panel-head">
+          <div>
+            <span class="eyebrow">Runtime Trace</span>
+            <h2>Requests And Replies</h2>
+          </div>
+          <div class="panel-actions">
+            <label class="search-field">
+              <span>Search</span>
+              <input id="searchInput" type="search" placeholder="Path, frame, status">
+            </label>
+            <select id="categoryFilter" class="select">
+              <option value="all">All traffic</option>
+              <option value="auth">Auth</option>
+              <option value="api">API</option>
+              <option value="asset">Assets</option>
+              <option value="error">Errors</option>
+              <option value="server">Server</option>
+            </select>
+            <label class="switch">
+              <input id="autoRefreshInput" type="checkbox" checked>
+              <span>Auto</span>
+            </label>
+            <button id="clearLogsBtn" class="btn danger" type="button">
+              <span class="btn-icon">X</span>
+              Clear Logs
+            </button>
+          </div>
+        </div>
+
+        <div id="trafficChips" class="traffic-chips" aria-label="Traffic summary"></div>
+
+        <div class="log-layout">
+          <div class="log-list" id="logList" aria-live="polite"></div>
+          <aside class="detail-pane" id="detailPane">
+            <div class="detail-head">
+              <div>
+                <span class="label">Selected Entry</span>
+                <h3 id="detailTitle">No Log Selected</h3>
+              </div>
+              <button id="closeDetailBtn" class="icon-btn" type="button" title="Close detail">x</button>
+            </div>
+            <div class="detail-meta" id="detailMeta"></div>
+            <div class="detail-tabs" role="tablist" aria-label="Detail views">
+              <button class="detail-tab active" type="button" data-detail-tab="all">All</button>
+              <button class="detail-tab" type="button" data-detail-tab="request">Request</button>
+              <button class="detail-tab" type="button" data-detail-tab="response">Reply</button>
+            </div>
+            <pre id="detailBody" class="detail-body"></pre>
+          </aside>
+        </div>
+      </section>
+
+      <section id="players" class="panel players-panel">
+        <div class="panel-head">
+          <div>
+            <span class="eyebrow">Accounts</span>
+            <h2>Known Players</h2>
+          </div>
+        </div>
+        <div id="playersTable" class="players-table"></div>
+      </section>
+    </main>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <div id="clearModal" class="modal-backdrop" aria-hidden="true">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="clearTitle">
+      <h2 id="clearTitle">Clear Server Logs</h2>
+      <p>This removes the visible runtime log file.</p>
+      <label class="check-row">
+        <input id="clearBodiesInput" type="checkbox">
+        <span>Also remove request body dumps</span>
+      </label>
+      <div class="modal-actions">
+        <button id="cancelClearBtn" class="btn secondary" type="button">Cancel</button>
+        <button id="confirmClearBtn" class="btn danger" type="button">Clear</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/admin/assets/dashboard.js" defer></script>
+</body>
+</html>

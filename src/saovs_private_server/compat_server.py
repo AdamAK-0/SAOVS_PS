@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import hashlib
 import json
 import logging
 import os
@@ -13,7 +14,7 @@ from pathlib import Path
 from re import search, sub
 from urllib.parse import quote, unquote, urlparse
 
-from flask import Flask, Response, abort, jsonify, redirect, request, send_file
+from flask import Flask, Response, abort, g, jsonify, redirect, request, send_file
 from werkzeug.exceptions import HTTPException
 
 from cryptography.hazmat.primitives import padding
@@ -33,6 +34,9 @@ DEBUG_TUTORIAL_STEP = os.environ.get("SAOVS_DEFAULT_TUTORIAL_STEP", "999")
 DEFAULT_USER_NAME = os.environ.get("SAOVS_DEFAULT_USER_NAME", "Kirito")
 LOG_FILE = LOG_DIR / "saovs_private_server.log"
 REQUEST_DUMP_DIR = LOG_DIR / "request_bodies"
+ADMIN_STATIC_DIR = Path(__file__).with_name("admin_static")
+ADMIN_LOG_READ_BYTES = int(os.environ.get("SAOVS_ADMIN_LOG_READ_BYTES", str(2 * 1024 * 1024)))
+ADMIN_LOG_LIMIT = int(os.environ.get("SAOVS_ADMIN_LOG_LIMIT", "250"))
 SAVED_ANDROID_FILES = Path(
     os.environ.get("SAOVS_CONTENT_ROOT", SERVER_ROOT / "content" / "files")
 ).resolve()
@@ -271,6 +275,218 @@ def require_admin() -> None:
     token = request.headers.get("X-Admin-Token") or request.args.get("token") or ""
     if not secrets.compare_digest(token, SAOVS_ADMIN_TOKEN):
         abort(401)
+
+
+def clamp_int(value: object, default: int, minimum: int, maximum: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(minimum, min(maximum, parsed))
+
+
+def log_file_info() -> dict[str, object]:
+    exists = LOG_FILE.is_file()
+    size = LOG_FILE.stat().st_size if exists else 0
+    return {
+        "path": str(LOG_FILE),
+        "exists": exists,
+        "size": size,
+        "maxReadBytes": ADMIN_LOG_READ_BYTES,
+        "truncated": size > ADMIN_LOG_READ_BYTES,
+    }
+
+
+def read_log_tail(max_bytes: int = ADMIN_LOG_READ_BYTES) -> str:
+    if not LOG_FILE.is_file():
+        return ""
+
+    size = LOG_FILE.stat().st_size
+    with LOG_FILE.open("rb") as handle:
+        if size <= max_bytes:
+            return handle.read().decode("utf-8", errors="replace")
+
+        handle.seek(max(0, size - max_bytes))
+        text = handle.read().decode("utf-8", errors="replace")
+        first_newline = text.find("\n")
+        if first_newline >= 0:
+            text = text[first_newline + 1 :]
+        return f"[LOG TAIL] Showing the last {max_bytes} bytes of {size} total bytes.\n{text}"
+
+
+def log_entry_category(path: str, raw: str) -> str:
+    lower_path = path.lower()
+    lower_raw = raw.lower()
+    if "[asset]" in lower_raw or is_asset_path(lower_path):
+        return "asset"
+    if lower_path.startswith("/admin"):
+        return "admin"
+    if "transfer" in lower_path or "bnid" in lower_path or "login.html" in lower_path:
+        return "auth"
+    if lower_path.startswith("/api/") or "/api/" in lower_path:
+        return "api"
+    if "[exception]" in lower_raw or "[http error]" in lower_raw:
+        return "error"
+    return "server"
+
+
+def is_asset_path(path: str) -> bool:
+    suffixes = (".bundle", ".hash", ".db", ".json", ".png", ".jpg", ".jpeg", ".mp4", "__data")
+    return any(path.endswith(suffix) for suffix in suffixes)
+
+
+def route_short_name(path: str) -> str:
+    clean = path.strip("/") or "/"
+    if len(clean) <= 52:
+        return clean
+    return "..." + clean[-49:]
+
+
+def parse_log_block(lines: list[str], index: int) -> dict[str, object]:
+    raw = "\n".join(lines).strip()
+    digest = hashlib.sha1(f"{index}:{raw}".encode("utf-8", errors="replace")).hexdigest()[:16]
+    entry: dict[str, object] = {
+        "id": digest,
+        "index": index,
+        "timestamp": "",
+        "remote": "",
+        "method": "",
+        "path": "",
+        "status": "",
+        "category": "server",
+        "requestKey": "",
+        "responseKey": "",
+        "host": "",
+        "bodyDump": "",
+        "summary": "Server event",
+        "preview": raw[:360],
+        "detail": raw,
+    }
+
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("[TIME] "):
+            entry["timestamp"] = stripped.removeprefix("[TIME] ").strip()
+        elif stripped.startswith("[REMOTE] "):
+            entry["remote"] = stripped.removeprefix("[REMOTE] ").strip()
+        elif stripped.startswith("[REQUEST] "):
+            match = search(r"^\[REQUEST\]\s+([A-Z]+)\s+(.+)$", stripped)
+            if match:
+                entry["method"] = match.group(1)
+                entry["path"] = match.group(2)
+        elif stripped.lower().startswith("host:"):
+            entry["host"] = stripped.split(":", 1)[1].strip()
+        elif stripped.startswith("[BODY DUMP] "):
+            entry["bodyDump"] = stripped.removeprefix("[BODY DUMP] ").strip()
+        elif stripped.startswith("[SAOVS FRAME] "):
+            match = search(r"'key':\s*'([^']+)'", stripped)
+            if match:
+                entry["requestKey"] = match.group(1)
+        elif stripped.startswith("[SAOVS RESPONSE KEY] "):
+            entry["responseKey"] = stripped.removeprefix("[SAOVS RESPONSE KEY] ").strip()
+        elif stripped.startswith("[RESPONSE] "):
+            match = search(r"^\[RESPONSE\]\s+([A-Z]+)\s+(.+?)\s+->\s+(\d+)", stripped)
+            if match:
+                entry["method"] = entry["method"] or match.group(1)
+                entry["path"] = entry["path"] or match.group(2)
+                entry["status"] = match.group(3)
+        elif stripped.startswith("[ASSET] serving "):
+            entry["summary"] = stripped
+        elif stripped.startswith("[ASSET] missing "):
+            entry["summary"] = stripped
+            entry["status"] = entry["status"] or "404"
+        elif stripped.startswith("[HTTP ERROR] "):
+            entry["summary"] = stripped
+            entry["category"] = "error"
+        elif stripped.startswith("[EXCEPTION] "):
+            entry["summary"] = stripped
+            entry["category"] = "error"
+
+    path = str(entry["path"])
+    method = str(entry["method"])
+    status = str(entry["status"])
+    if path:
+        entry["category"] = log_entry_category(path, raw)
+        entry["summary"] = f"{method or 'EVENT'} {route_short_name(path)}"
+        if status:
+            entry["summary"] = f"{entry['summary']} -> {status}"
+    elif entry["category"] == "server" and lines:
+        entry["summary"] = lines[0].strip()[:90] or "Server event"
+
+    return entry
+
+
+def parse_log_entries(text: str) -> list[dict[str, object]]:
+    marker = "================ SAOVS DEBUG REQUEST ================"
+    blocks: list[list[str]] = []
+    current: list[str] = []
+    standalone: list[str] = []
+
+    for line in text.splitlines():
+        if marker in line:
+            if current:
+                blocks.append(current)
+            elif standalone:
+                blocks.append(standalone)
+                standalone = []
+            current = [line]
+            continue
+
+        if current:
+            current.append(line)
+        elif line.strip():
+            standalone.append(line)
+
+    if current:
+        blocks.append(current)
+    elif standalone:
+        blocks.append(standalone)
+
+    entries = [parse_log_block(block, index) for index, block in enumerate(blocks, start=1)]
+    entries.reverse()
+    return entries
+
+
+def summarize_log_entries(entries: list[dict[str, object]]) -> dict[str, object]:
+    status_counts: dict[str, int] = {}
+    category_counts: dict[str, int] = {}
+    for entry in entries:
+        status = str(entry.get("status") or "event")
+        category = str(entry.get("category") or "server")
+        status_counts[status] = status_counts.get(status, 0) + 1
+        category_counts[category] = category_counts.get(category, 0) + 1
+
+    newest = entries[0]["timestamp"] if entries and entries[0].get("timestamp") else ""
+    return {
+        "total": len(entries),
+        "newest": newest,
+        "statusCounts": status_counts,
+        "categoryCounts": category_counts,
+    }
+
+
+def truncate_server_logs(clear_request_bodies: bool = False) -> int:
+    removed_dumps = 0
+    formatter = logging.Formatter("%(message)s")
+    for handler in list(LOGGER.handlers):
+        if isinstance(handler, logging.FileHandler):
+            LOGGER.removeHandler(handler)
+            handler.close()
+
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    LOG_FILE.write_text("", encoding="utf-8")
+
+    file_handler = logging.FileHandler(LOG_FILE, encoding="utf-8")
+    file_handler.setFormatter(formatter)
+    LOGGER.addHandler(file_handler)
+
+    if clear_request_bodies and REQUEST_DUMP_DIR.is_dir():
+        for item in REQUEST_DUMP_DIR.iterdir():
+            if item.is_file():
+                item.unlink()
+                removed_dumps += 1
+
+    return removed_dumps
 
 
 def load_offline_api_payload(file_name: str) -> dict[str, object] | None:
@@ -725,6 +941,8 @@ def wants_saovs_frame() -> bool:
 
 @app.after_request
 def log_response(response: Response) -> Response:
+    if getattr(g, "skip_response_log", False) or request.path.startswith("/admin") or request.path == "/favicon.ico":
+        return response
     emit_log(f"[RESPONSE] {request.method} {request.path} -> {response.status_code}")
     return response
 
@@ -732,6 +950,8 @@ def log_response(response: Response) -> Response:
 @app.errorhandler(Exception)
 def log_exception(error: Exception) -> Response | tuple[Response, int]:
     if isinstance(error, HTTPException):
+        if request.path.startswith("/admin"):
+            return jsonify({"statusCode": 10001, "error": error.description}), error.code or 500
         emit_log(f"[HTTP ERROR] {request.method} {request.path} -> {error.code} {error.description}")
         return jsonify({"statusCode": 10001, "error": error.description}), error.code or 500
 
@@ -1111,6 +1331,77 @@ def transfer_set_bnid() -> Response:
     if wants_saovs_frame():
         return make_saovs_frame_response({})
     return jsonify({"statusCode": 10000, "response": {}})
+
+
+@app.route("/admin", methods=["GET"])
+@app.route("/admin/", methods=["GET"])
+def admin_dashboard() -> Response:
+    return send_file(ADMIN_STATIC_DIR / "dashboard.html", mimetype="text/html")
+
+
+@app.route("/admin/assets/<path:filename>", methods=["GET"])
+def admin_dashboard_asset(filename: str) -> Response:
+    asset_path = (ADMIN_STATIC_DIR / filename).resolve()
+    if filename.startswith("media/") and not asset_path.is_file():
+        return Response(status=204)
+    if not asset_path.is_relative_to(ADMIN_STATIC_DIR.resolve()) or not asset_path.is_file():
+        abort(404)
+    return send_file(asset_path)
+
+
+@app.route("/favicon.ico", methods=["GET"])
+def favicon_ico() -> Response:
+    g.skip_response_log = True
+    return Response(status=204)
+
+
+@app.route("/admin/api/logs", methods=["GET"])
+def admin_api_logs() -> Response:
+    require_admin()
+    limit = clamp_int(request.args.get("limit"), ADMIN_LOG_LIMIT, 1, 1000)
+    category = (request.args.get("category") or "all").lower()
+    status = (request.args.get("status") or "all").lower()
+    query = (request.args.get("q") or "").lower().strip()
+
+    entries = parse_log_entries(read_log_tail())
+    if category != "all":
+        entries = [entry for entry in entries if str(entry.get("category", "")).lower() == category]
+    if status != "all":
+        entries = [entry for entry in entries if str(entry.get("status") or "event").lower() == status]
+    if query:
+        entries = [
+            entry
+            for entry in entries
+            if query in str(entry.get("summary", "")).lower()
+            or query in str(entry.get("path", "")).lower()
+            or query in str(entry.get("detail", "")).lower()
+        ]
+
+    return jsonify(
+        {
+            "logFile": log_file_info(),
+            "summary": summarize_log_entries(entries),
+            "entries": entries[:limit],
+            "available": len(entries),
+            "shown": min(limit, len(entries)),
+        }
+    )
+
+
+@app.route("/admin/api/logs/clear", methods=["POST"])
+def admin_api_clear_logs() -> Response:
+    require_admin()
+    payload = request.get_json(silent=True) or {}
+    clear_request_bodies = bool(payload.get("requestBodies"))
+    removed_dumps = truncate_server_logs(clear_request_bodies)
+    g.skip_response_log = True
+    return jsonify(
+        {
+            "ok": True,
+            "logFile": str(LOG_FILE),
+            "removedRequestBodies": removed_dumps,
+        }
+    )
 
 
 @app.route("/admin/health", methods=["GET"])

@@ -46,6 +46,12 @@ curl http://127.0.0.1:8000/admin/health
 curl http://127.0.0.1:8000/admin/users
 ```
 
+Open the admin dashboard:
+
+```text
+http://127.0.0.1:8000/admin
+```
+
 Stop:
 
 ```powershell
@@ -64,7 +70,39 @@ powershell -ExecutionPolicy Bypass -File scripts\stop_private_server.ps1
   It also explains why the 3.7 GB content folder should stay outside GitHub.
 
 Set `SAOVS_ADMIN_TOKEN` before exposing the server. When that variable is set,
-`/admin/*` requires the token in `X-Admin-Token` or `?token=...`.
+admin JSON routes require the token in `X-Admin-Token` or `?token=...`. The
+dashboard page still loads so you can paste the token into the UI.
+
+## Admin Dashboard
+
+The server includes a browser dashboard at `/admin`. It shows server health,
+known users, live parsed request/reply logs, asset/API/auth categories, and a
+raw detail pane for each log entry. The dashboard also has search, filtering,
+auto-refresh, and a clear-logs action.
+
+The default art is original SAO-inspired dashboard artwork. For a private local
+setup, you can drop your own owned/downloaded images into:
+
+```text
+src/saovs_private_server/admin_static/media/
+```
+
+Supported names are `hero.jpg`, `banner.jpg`, and `card.jpg`. Those image files
+are ignored by Git so they do not get pushed accidentally.
+
+Useful admin routes:
+
+```text
+GET  /admin
+GET  /admin/health
+GET  /admin/users
+GET  /admin/api/logs?limit=250
+POST /admin/api/logs/clear
+```
+
+If `SAOVS_ADMIN_TOKEN` is set, paste the same token into the dashboard token
+field. The UI stores it in browser local storage and sends it as
+`X-Admin-Token`.
 
 ## Public Deployment Shape
 
