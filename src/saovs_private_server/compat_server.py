@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import json
 import logging
 import os
 import secrets
@@ -26,8 +27,8 @@ LOG_DIR = Path(os.environ.get("SAOVS_LOG_DIR", SERVER_ROOT / "runtime" / "logs")
 DB_FILE = Path(os.environ.get("SAOVS_DB", SERVER_ROOT / "runtime" / "saovs.sqlite3")).resolve()
 DEBUG_AUTH_CODE = os.environ.get("SAOVS_DEFAULT_AUTH_CODE", "LOCAL_TRANSFER_CODE")
 DEBUG_SESSION = "debug-local-session"
-DEBUG_USER_ID = 1
-DEBUG_USER_CODE = 100000000001
+DEBUG_USER_ID = int(os.environ.get("SAOVS_DEFAULT_USER_ID", "183705490"))
+DEBUG_USER_CODE = int(os.environ.get("SAOVS_DEFAULT_USER_CODE", "46841725594"))
 DEBUG_TUTORIAL_STEP = os.environ.get("SAOVS_DEFAULT_TUTORIAL_STEP", "999")
 DEFAULT_USER_NAME = os.environ.get("SAOVS_DEFAULT_USER_NAME", "Kirito")
 LOG_FILE = LOG_DIR / "saovs_private_server.log"
@@ -56,6 +57,20 @@ parsed_asset_host = urlparse(SAOVS_ASSET_BASE).hostname
 if parsed_asset_host:
     SAOVS_ASSET_HOSTS.add(parsed_asset_host.lower())
 ASSET_FILE_INDEX: dict[str, Path] | None = None
+OFFLINE_API_ROUTE_FILES = {
+    "ability/index": "ability_index.json",
+    "character/index": "character_index.json",
+    "equipment/index": "equipment_index.json",
+    "greeting/list": "greeting_list.json",
+    "home/index": "home_index.json",
+    "party/index": "party_index.json",
+    "stamp/getuserset": "stamp_getUserSet.json",
+    "story/index": "story_index.json",
+    "unlimiteddungeon/index": "unlimitedDungeon_index.json",
+    "user/login": "user_login.json",
+    "user/profile": "user_profile.json",
+    "user/quest": "user_quest.json",
+}
 
 
 def setup_logging() -> logging.Logger:
@@ -167,22 +182,52 @@ def get_user_by_session(session: str) -> dict[str, object] | None:
 def get_or_create_user(uuid: str, user_name: str | None = None) -> dict[str, object]:
     existing = get_user_by_uuid(uuid)
     if existing:
+        if int(existing["id"]) != DEBUG_USER_ID or int(existing["user_code"]) != DEBUG_USER_CODE:
+            with db_connect() as conn:
+                conn.execute("UPDATE sessions SET user_id = ? WHERE user_id = ?", (DEBUG_USER_ID, existing["id"]))
+                conn.execute(
+                    """
+                    UPDATE users
+                    SET id = ?, user_code = ?, user_name = ?, tutorial_step = ?, updated_at = ?
+                    WHERE uuid = ?
+                    """,
+                    (
+                        DEBUG_USER_ID,
+                        DEBUG_USER_CODE,
+                        user_name or DEFAULT_USER_NAME,
+                        DEBUG_TUTORIAL_STEP,
+                        utc_text(),
+                        uuid,
+                    ),
+                )
+                row = conn.execute("SELECT * FROM users WHERE uuid = ?", (uuid,)).fetchone()
+                emit_log(
+                    "[ACCOUNT] aligned user "
+                    f"id={DEBUG_USER_ID} user_code={DEBUG_USER_CODE} uuid={uuid}"
+                )
+                return dict(row)
         return existing
 
     now = utc_text()
     with db_connect() as conn:
-        cursor = conn.execute(
+        conn.execute(
             """
-            INSERT INTO users (uuid, user_name, tutorial_step, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT OR REPLACE INTO users
+                (id, user_code, uuid, user_name, tutorial_step, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            (uuid, user_name or DEFAULT_USER_NAME, DEBUG_TUTORIAL_STEP, now, now),
+            (
+                DEBUG_USER_ID,
+                DEBUG_USER_CODE,
+                uuid,
+                user_name or DEFAULT_USER_NAME,
+                DEBUG_TUTORIAL_STEP,
+                now,
+                now,
+            ),
         )
-        user_id = int(cursor.lastrowid)
-        user_code = 100000000000 + user_id
-        conn.execute("UPDATE users SET user_code = ? WHERE id = ?", (user_code, user_id))
-        row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
-        emit_log(f"[ACCOUNT] created user id={user_id} user_code={user_code} uuid={uuid}")
+        row = conn.execute("SELECT * FROM users WHERE id = ?", (DEBUG_USER_ID,)).fetchone()
+        emit_log(f"[ACCOUNT] created user id={DEBUG_USER_ID} user_code={DEBUG_USER_CODE} uuid={uuid}")
         return dict(row)
 
 
@@ -226,6 +271,34 @@ def require_admin() -> None:
     token = request.headers.get("X-Admin-Token") or request.args.get("token") or ""
     if not secrets.compare_digest(token, SAOVS_ADMIN_TOKEN):
         abort(401)
+
+
+def load_offline_api_payload(file_name: str) -> dict[str, object] | None:
+    path = SAVED_ANDROID_FILES / "OfflineApi" / file_name
+    if not path.is_file():
+        return None
+
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except Exception as exc:
+        emit_log(f"[OFFLINE API] failed to read {path}: {exc}")
+        return None
+
+    if isinstance(payload, dict):
+        return payload
+
+    emit_log(f"[OFFLINE API] ignored non-object payload: {path}")
+    return None
+
+
+def align_user_identity(payload: dict[str, object], user: dict[str, object] | None = None) -> dict[str, object]:
+    user = user or current_user()
+    aligned = dict(payload)
+    aligned["userId"] = int(user["id"])
+    aligned["userCode"] = int(user["user_code"])
+    aligned.setdefault("userName", str(user["user_name"]))
+    return aligned
 
 
 init_db()
@@ -776,6 +849,10 @@ def user_check_version() -> Response:
 
 def make_user_login_payload(user: dict[str, object] | None = None) -> dict[str, object]:
     user = user or current_user()
+    offline = load_offline_api_payload("user_login.json")
+    if offline is not None:
+        return align_user_identity(offline, user)
+
     return {
         "callLoginBonus": False,
         "isResume": 0,
@@ -833,6 +910,10 @@ def make_user_growth_info() -> dict[str, object]:
 
 def make_user_info(user: dict[str, object] | None = None) -> dict[str, object]:
     user = user or current_user()
+    home = load_offline_api_payload("home_index.json")
+    if home and isinstance(home.get("userInfo"), dict):
+        return align_user_identity(home["userInfo"], user)
+
     return {
         "userId": int(user["id"]),
         "userCode": int(user["user_code"]),
@@ -887,6 +968,17 @@ def make_debug_party() -> dict[str, object]:
 
 def bootstrap_payload_for_path(path: str) -> dict[str, object] | None:
     normalized = path.lower()
+    for suffix, file_name in OFFLINE_API_ROUTE_FILES.items():
+        if normalized.endswith(suffix):
+            payload = load_offline_api_payload(file_name)
+            if payload is not None:
+                if isinstance(payload.get("userInfo"), dict):
+                    payload = dict(payload)
+                    payload["userInfo"] = align_user_identity(payload["userInfo"])
+                else:
+                    payload = align_user_identity(payload) if suffix == "user/login" else payload
+                emit_log(f"[OFFLINE API] {path} <- {file_name}")
+                return payload
 
     if normalized.endswith("ability/index"):
         return {"abilities": []}

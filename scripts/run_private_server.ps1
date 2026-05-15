@@ -6,6 +6,11 @@ param(
     [string]$ContentRoot = "",
     [string]$AssetBase = "https://assets-os.saovs.channel.or.jp/",
     [string]$AssetHosts = "assets-os.saovs.channel.or.jp",
+    [string]$AssetVer = "30000",
+    [string]$MasterDataVer = "202",
+    [int]$LocalizeDataVer = 161,
+    [int]$DefaultUserId = 183705490,
+    [int64]$DefaultUserCode = 46841725594,
     [switch]$HttpOnly
 )
 
@@ -47,9 +52,11 @@ $env:SAOVS_LOG_DIR = $Logs
 $env:SAOVS_CONTENT_ROOT = $ContentRoot
 $env:SAOVS_ASSET_BASE = $AssetBase
 $env:SAOVS_ASSET_HOSTS = $AssetHosts
-$env:SAOVS_ASSET_VER = "30000"
-$env:SAOVS_MASTER_DATA_VER = "30000"
-$env:SAOVS_LOCALIZE_DATA_VER = "30000"
+$env:SAOVS_ASSET_VER = $AssetVer
+$env:SAOVS_MASTER_DATA_VER = $MasterDataVer
+$env:SAOVS_LOCALIZE_DATA_VER = "$LocalizeDataVer"
+$env:SAOVS_DEFAULT_USER_ID = "$DefaultUserId"
+$env:SAOVS_DEFAULT_USER_CODE = "$DefaultUserCode"
 
 Write-Host "SAOVS private server"
 Write-Host "  root:        $Root"
@@ -57,6 +64,8 @@ Write-Host "  content:     $ContentRoot"
 Write-Host "  database:    $env:SAOVS_DB"
 Write-Host "  asset base:  $AssetBase"
 Write-Host "  asset hosts: $AssetHosts"
+Write-Host "  versions:    asset=$AssetVer master=$MasterDataVer localize=$LocalizeDataVer"
+Write-Host "  user:        id=$DefaultUserId code=$DefaultUserCode"
 
 if (-not (Test-Path -LiteralPath $ContentRoot)) {
     Write-Warning "Content root does not exist yet: $ContentRoot"
