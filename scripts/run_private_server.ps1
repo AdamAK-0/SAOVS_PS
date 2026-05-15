@@ -1,7 +1,7 @@
 param(
     [string]$HostName = "0.0.0.0",
-    [int]$HttpPort = 8000,
-    [int]$HttpsPort = 8443,
+    [int]$HttpPort = 80,
+    [int]$HttpsPort = 443,
     [string]$Python = "python",
     [string]$ContentRoot = "",
     [string]$AssetBase = "https://assets-os.saovs.channel.or.jp/",
