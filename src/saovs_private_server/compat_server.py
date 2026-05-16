@@ -1077,7 +1077,11 @@ def puzzle_auth_page(auth_code: str = DEBUG_AUTH_CODE) -> Response:
     return Response(html, mimetype="text/html")
 
 
-def local_auth_result_url(auth_code: str = DEBUG_AUTH_CODE) -> str:
+def local_auth_result_url(auth_code: str = DEBUG_AUTH_CODE, redirect_uri: str | None = None) -> str:
+    if redirect_uri:
+        separator = "&" if "?" in redirect_uri else "?"
+        return f"{redirect_uri}{separator}code={quote(auth_code, safe='')}"
+
     origin = os.environ.get("SAOVS_AUTH_RESULT_ORIGIN", "http://10.0.2.2").rstrip("/")
     return f"{origin}/test.html?code={quote(auth_code, safe='')}"
 
@@ -1130,7 +1134,7 @@ def callback() -> Response:
 def login_html() -> Response:
     log_request()
     auth_code = request.args.get("auth_code") or request.args.get("code") or DEBUG_AUTH_CODE
-    target = local_auth_result_url(auth_code)
+    target = local_auth_result_url(auth_code, request.args.get("redirect_uri"))
     emit_log(f"[LOCAL LOGIN] Redirecting login URL to auth result: {target}")
     return redirect(target, code=302)
 
@@ -1144,7 +1148,7 @@ def bnid_login_html() -> Response:
         or request.args.get("code")
         or DEBUG_AUTH_CODE
     )
-    target = local_auth_result_url(auth_code)
+    target = local_auth_result_url(auth_code, request.args.get("redirect_uri"))
     emit_log(f"[BNID TEST LOGIN] Redirecting host={request.host} to auth result: {target}")
     return redirect(target, code=302)
 
