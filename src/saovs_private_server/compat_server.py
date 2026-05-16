@@ -1086,7 +1086,7 @@ def local_auth_result_url(auth_code: str = DEBUG_AUTH_CODE, redirect_uri: str | 
             separator = "&" if "?" in path else "?"
             origin = os.environ.get(
                 "SAOVS_RELATIVE_AUTH_RESULT_ORIGIN",
-                "http://assets-os.saovs.channel.or.jp",
+                os.environ.get("SAOVS_AUTH_RESULT_ORIGIN", "http://10.0.2.2"),
             ).rstrip("/")
             return f"{origin}{path}{separator}code={quote(auth_code, safe='')}"
         return f"{redirect_uri}{separator}code={quote(auth_code, safe='')}"
@@ -1562,6 +1562,8 @@ def admin_health() -> Response:
             "contentRootExists": content_ok,
             "assetBase": SAOVS_ASSET_BASE,
             "assetHosts": sorted(SAOVS_ASSET_HOSTS),
+            "authResultOrigin": os.environ.get("SAOVS_AUTH_RESULT_ORIGIN", ""),
+            "relativeAuthResultOrigin": os.environ.get("SAOVS_RELATIVE_AUTH_RESULT_ORIGIN", ""),
         }
     )
 

@@ -32,6 +32,22 @@ python -m pip install -r requirements.txt
 powershell -ExecutionPolicy Bypass -File scripts\run_private_server.ps1 -HttpOnly
 ```
 
+For phone or LAN testing, make the BNID callback return to the server by IP.
+The runner auto-detects this laptop's LAN IP, or you can set it explicitly:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\run_private_server.ps1 -AuthResultOrigin http://10.202.154.166
+```
+
+When using a public Let's Encrypt certificate, pass the exported PEM files:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\run_private_server.ps1 `
+  -CertFile "C:\Users\Adam\SAOVS_PS\certs\public-saovs\fullchain.pem" `
+  -KeyFile "C:\Users\Adam\SAOVS_PS\certs\public-saovs\privkey.pem" `
+  -AuthResultOrigin http://10.202.154.166
+```
+
 The local dev runner uses `content/files` by default. On this machine that path
 is a junction to Adam's existing working content folder:
 
@@ -118,6 +134,8 @@ Set:
 ```powershell
 $env:SAOVS_ASSET_BASE = "https://assets.example.com/"
 $env:SAOVS_ASSET_HOSTS = "assets.example.com"
+$env:SAOVS_AUTH_RESULT_ORIGIN = "https://api.example.com"
+$env:SAOVS_RELATIVE_AUTH_RESULT_ORIGIN = "https://api.example.com"
 ```
 
 The app can run behind Caddy/nginx on an internal port such as `127.0.0.1:8000`.

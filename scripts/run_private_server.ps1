@@ -6,6 +6,11 @@ param(
     [string]$ContentRoot = "",
     [string]$AssetBase = "https://assets-os.saovs.channel.or.jp/",
     [string]$AssetHosts = "assets-os.saovs.channel.or.jp",
+    [string]$AuthResultOrigin = "",
+    [Alias("CertFile")]
+    [string]$SslCert = "",
+    [Alias("KeyFile")]
+    [string]$SslKey = "",
     [string]$AssetVer = "30000",
     [string]$MasterDataVer = "202",
     [int]$LocalizeDataVer = 161,
@@ -19,8 +24,49 @@ $ErrorActionPreference = "Stop"
 $Root = Resolve-Path (Join-Path $PSScriptRoot "..")
 $Runtime = Join-Path $Root "runtime"
 $Logs = Join-Path $Runtime "logs"
-$Cert = Join-Path $Root "certs\saovs_api.pem"
-$Key = Join-Path $Root "certs\saovs_api.key"
+
+function Get-DefaultLanIPv4 {
+    $configs = Get-NetIPConfiguration -ErrorAction SilentlyContinue |
+        Where-Object { $_.IPv4DefaultGateway -and $_.IPv4Address } |
+        Sort-Object -Property InterfaceMetric
+
+    foreach ($config in $configs) {
+        foreach ($addr in $config.IPv4Address) {
+            $ip = $addr.IPAddress
+            if ($ip -and $ip -notlike "127.*" -and $ip -notlike "169.254.*") {
+                return $ip
+            }
+        }
+    }
+
+    $addr = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+        Where-Object { $_.IPAddress -notlike "127.*" -and $_.IPAddress -notlike "169.254.*" } |
+        Select-Object -First 1
+    return $addr.IPAddress
+}
+
+if ([string]::IsNullOrWhiteSpace($AuthResultOrigin)) {
+    $lanIp = Get-DefaultLanIPv4
+    if ($lanIp) {
+        $AuthResultOrigin = "http://$lanIp"
+    } else {
+        $AuthResultOrigin = "http://127.0.0.1"
+    }
+}
+
+if ([string]::IsNullOrWhiteSpace($SslCert)) {
+    $SslCert = Join-Path $Root "certs\saovs_api.pem"
+    if (-not (Test-Path -LiteralPath $SslCert)) {
+        $SslCert = Join-Path $Root "certs\saovs-local-combined\saovs-local-combined.pem"
+    }
+}
+
+if ([string]::IsNullOrWhiteSpace($SslKey)) {
+    $SslKey = Join-Path $Root "certs\saovs_api.key"
+    if (-not (Test-Path -LiteralPath $SslKey)) {
+        $SslKey = Join-Path $Root "certs\saovs-local-combined\saovs-local-combined.key"
+    }
+}
 
 New-Item -ItemType Directory -Force -Path $Logs | Out-Null
 
@@ -52,6 +98,8 @@ $env:SAOVS_LOG_DIR = $Logs
 $env:SAOVS_CONTENT_ROOT = $ContentRoot
 $env:SAOVS_ASSET_BASE = $AssetBase
 $env:SAOVS_ASSET_HOSTS = $AssetHosts
+$env:SAOVS_AUTH_RESULT_ORIGIN = $AuthResultOrigin
+$env:SAOVS_RELATIVE_AUTH_RESULT_ORIGIN = $AuthResultOrigin
 $env:SAOVS_ASSET_VER = $AssetVer
 $env:SAOVS_MASTER_DATA_VER = $MasterDataVer
 $env:SAOVS_LOCALIZE_DATA_VER = "$LocalizeDataVer"
@@ -64,6 +112,7 @@ Write-Host "  content:     $ContentRoot"
 Write-Host "  database:    $env:SAOVS_DB"
 Write-Host "  asset base:  $AssetBase"
 Write-Host "  asset hosts: $AssetHosts"
+Write-Host "  auth result: $AuthResultOrigin"
 Write-Host "  versions:    asset=$AssetVer master=$MasterDataVer localize=$LocalizeDataVer"
 Write-Host "  user:        id=$DefaultUserId code=$DefaultUserCode"
 
@@ -76,8 +125,8 @@ if ($HttpOnly) {
     exit $LASTEXITCODE
 }
 
-if (-not (Test-Path -LiteralPath $Cert) -or -not (Test-Path -LiteralPath $Key)) {
-    throw "HTTPS cert/key not found. Expected $Cert and $Key"
+if (-not (Test-Path -LiteralPath $SslCert) -or -not (Test-Path -LiteralPath $SslKey)) {
+    throw "HTTPS cert/key not found. Expected $SslCert and $SslKey"
 }
 
 $httpOut = Join-Path $Logs "http_stdout.log"
@@ -94,7 +143,7 @@ $http = Start-Process -FilePath $Python `
     -PassThru
 
 $https = Start-Process -FilePath $Python `
-    -ArgumentList @("-m", "saovs_private_server.compat_server", "--host", $HostName, "--port", "$HttpsPort", "--ssl-cert", $Cert, "--ssl-key", $Key) `
+    -ArgumentList @("-m", "saovs_private_server.compat_server", "--host", $HostName, "--port", "$HttpsPort", "--ssl-cert", $SslCert, "--ssl-key", $SslKey) `
     -WorkingDirectory $Root `
     -RedirectStandardOutput $httpsOut `
     -RedirectStandardError $httpsErr `
