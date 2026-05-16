@@ -32,20 +32,41 @@ python -m pip install -r requirements.txt
 powershell -ExecutionPolicy Bypass -File scripts\run_private_server.ps1 -HttpOnly
 ```
 
-For phone or LAN testing, make the BNID callback return to the server by IP.
-The runner auto-detects this laptop's LAN IP, or you can set it explicitly:
+For phone or LAN testing with the patched public-TLS APK, the default runner
+advertises the portable lab asset host:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\run_private_server.ps1
+```
+
+That defaults to:
+
+```text
+SAOVS_ASSET_BASE=https://assets-os-login-lab.saovs.com/
+SAOVS_AUTH_RESULT_ORIGIN=https://assets-os-login-lab.saovs.com
+```
+
+Point those hostnames to whichever laptop is currently hosting the server from
+the SAOVS DNS/VPN redirector. If you need an IP callback for an older local
+test, set it explicitly:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\run_private_server.ps1 -AuthResultOrigin http://10.202.154.166
 ```
 
-When using a public Let's Encrypt certificate, pass the exported PEM files:
+When using a public Let's Encrypt certificate, put the exported PEM files here:
+
+```text
+certs\public-saovs\fullchain.pem
+certs\public-saovs\privkey.pem
+```
+
+The runner uses those files automatically. You can still pass them explicitly:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\run_private_server.ps1 `
   -CertFile "C:\SAOVS_PS\certs\public-saovs\fullchain.pem" `
-  -KeyFile "C:\SAOVS_PS\certs\public-saovs\privkey.pem" `
-  -AuthResultOrigin http://10.202.154.166
+  -KeyFile "C:\SAOVS_PS\certs\public-saovs\privkey.pem"
 ```
 
 The local dev runner uses `content/files` by default. On this machine that path
@@ -134,8 +155,8 @@ Set:
 ```powershell
 $env:SAOVS_ASSET_BASE = "https://assets.example.com/"
 $env:SAOVS_ASSET_HOSTS = "assets.example.com"
-$env:SAOVS_AUTH_RESULT_ORIGIN = "https://api.example.com"
-$env:SAOVS_RELATIVE_AUTH_RESULT_ORIGIN = "https://api.example.com"
+$env:SAOVS_AUTH_RESULT_ORIGIN = "https://assets.example.com"
+$env:SAOVS_RELATIVE_AUTH_RESULT_ORIGIN = "https://assets.example.com"
 ```
 
 The app can run behind Caddy/nginx on an internal port such as `127.0.0.1:8000`.

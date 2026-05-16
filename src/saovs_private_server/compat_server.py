@@ -81,7 +81,11 @@ SAOVS_OLD_KEY = b"ADrbjQw8UABp9zsBeZjaw7LbMxyfQRZD"
 SAOVS_OLD_IV = b"jJkbN3VV9PAUhCLz"
 SAOVS_NEW_KEY = b"6d14XUUQ9J1xjshP8u5avnqipObMa3tk"
 SAOVS_NEW_IV = b"FJxIPPhFj8o85u9b"
-SAOVS_ASSET_BASE = os.environ.get("SAOVS_ASSET_BASE", "https://assets-os.saovs.channel.or.jp/")
+DEFAULT_ASSET_BASE = "https://assets-os-login-lab.saovs.com/"
+DEFAULT_ASSET_HOSTS = "assets-os-login-lab.saovs.com,assets-os.saovs.channel.or.jp"
+DEFAULT_AUTH_RESULT_ORIGIN = DEFAULT_ASSET_BASE.rstrip("/")
+
+SAOVS_ASSET_BASE = os.environ.get("SAOVS_ASSET_BASE", DEFAULT_ASSET_BASE)
 SAOVS_ASSET_VER = os.environ.get("SAOVS_ASSET_VER", offline_login_value("assetver", "30000"))
 SAOVS_MASTER_DATA_VER = os.environ.get("SAOVS_MASTER_DATA_VER", offline_login_value("masterver", "202"))
 SAOVS_LOCALIZE_DATA_VER = int(os.environ.get("SAOVS_LOCALIZE_DATA_VER", offline_login_value("localizever", "161")))
@@ -90,7 +94,7 @@ SAOVS_ASSET_HOSTS = {
     host.strip().lower()
     for host in os.environ.get(
         "SAOVS_ASSET_HOSTS",
-        "assets-os.saovs.channel.or.jp",
+        DEFAULT_ASSET_HOSTS,
     ).split(",")
     if host.strip()
 }
@@ -1086,12 +1090,12 @@ def local_auth_result_url(auth_code: str = DEBUG_AUTH_CODE, redirect_uri: str | 
             separator = "&" if "?" in path else "?"
             origin = os.environ.get(
                 "SAOVS_RELATIVE_AUTH_RESULT_ORIGIN",
-                os.environ.get("SAOVS_AUTH_RESULT_ORIGIN", "http://10.0.2.2"),
+                os.environ.get("SAOVS_AUTH_RESULT_ORIGIN", DEFAULT_AUTH_RESULT_ORIGIN),
             ).rstrip("/")
             return f"{origin}{path}{separator}code={quote(auth_code, safe='')}"
         return f"{redirect_uri}{separator}code={quote(auth_code, safe='')}"
 
-    origin = os.environ.get("SAOVS_AUTH_RESULT_ORIGIN", "http://10.0.2.2").rstrip("/")
+    origin = os.environ.get("SAOVS_AUTH_RESULT_ORIGIN", DEFAULT_AUTH_RESULT_ORIGIN).rstrip("/")
     return f"{origin}/test.html?code={quote(auth_code, safe='')}"
 
 

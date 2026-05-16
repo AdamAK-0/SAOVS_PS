@@ -4,8 +4,8 @@ param(
     [int]$HttpsPort = 443,
     [string]$Python = "python",
     [string]$ContentRoot = "",
-    [string]$AssetBase = "https://assets-os.saovs.channel.or.jp/",
-    [string]$AssetHosts = "assets-os.saovs.channel.or.jp",
+    [string]$AssetBase = "https://assets-os-login-lab.saovs.com/",
+    [string]$AssetHosts = "assets-os-login-lab.saovs.com,assets-os.saovs.channel.or.jp",
     [string]$AuthResultOrigin = "",
     [Alias("CertFile")]
     [string]$SslCert = "",
@@ -45,26 +45,53 @@ function Get-DefaultLanIPv4 {
     return $addr.IPAddress
 }
 
+function Get-OriginFromUrl {
+    param([string]$Url)
+
+    try {
+        $uri = [Uri]$Url
+        if ($uri.Scheme -and $uri.Host) {
+            if ($uri.IsDefaultPort) {
+                return "$($uri.Scheme)://$($uri.Host)"
+            }
+            return "$($uri.Scheme)://$($uri.Host):$($uri.Port)"
+        }
+    } catch {
+        return ""
+    }
+
+    return ""
+}
+
 if ([string]::IsNullOrWhiteSpace($AuthResultOrigin)) {
-    $lanIp = Get-DefaultLanIPv4
-    if ($lanIp) {
-        $AuthResultOrigin = "http://$lanIp"
-    } else {
-        $AuthResultOrigin = "http://127.0.0.1"
+    $AuthResultOrigin = Get-OriginFromUrl -Url $AssetBase
+    if ([string]::IsNullOrWhiteSpace($AuthResultOrigin)) {
+        $lanIp = Get-DefaultLanIPv4
+        if ($lanIp) {
+            $AuthResultOrigin = "http://$lanIp"
+        } else {
+            $AuthResultOrigin = "http://127.0.0.1"
+        }
     }
 }
 
 if ([string]::IsNullOrWhiteSpace($SslCert)) {
-    $SslCert = Join-Path $Root "certs\saovs_api.pem"
+    $SslCert = Join-Path $Root "certs\public-saovs\fullchain.pem"
     if (-not (Test-Path -LiteralPath $SslCert)) {
-        $SslCert = Join-Path $Root "certs\saovs-local-combined\saovs-local-combined.pem"
+        $SslCert = Join-Path $Root "certs\saovs_api.pem"
+        if (-not (Test-Path -LiteralPath $SslCert)) {
+            $SslCert = Join-Path $Root "certs\saovs-local-combined\saovs-local-combined.pem"
+        }
     }
 }
 
 if ([string]::IsNullOrWhiteSpace($SslKey)) {
-    $SslKey = Join-Path $Root "certs\saovs_api.key"
+    $SslKey = Join-Path $Root "certs\public-saovs\privkey.pem"
     if (-not (Test-Path -LiteralPath $SslKey)) {
-        $SslKey = Join-Path $Root "certs\saovs-local-combined\saovs-local-combined.key"
+        $SslKey = Join-Path $Root "certs\saovs_api.key"
+        if (-not (Test-Path -LiteralPath $SslKey)) {
+            $SslKey = Join-Path $Root "certs\saovs-local-combined\saovs-local-combined.key"
+        }
     }
 }
 
