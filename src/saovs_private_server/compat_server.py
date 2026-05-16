@@ -1086,6 +1086,19 @@ def local_auth_result_url(auth_code: str = DEBUG_AUTH_CODE, redirect_uri: str | 
     return f"{origin}/test.html?code={quote(auth_code, safe='')}"
 
 
+def is_relative_bnid_redirect(redirect_uri: str | None) -> bool:
+    if not redirect_uri:
+        return False
+
+    lowered = redirect_uri.strip().lower()
+    return (
+        lowered == "test.html"
+        or lowered.startswith("test.html?")
+        or lowered == "/test.html"
+        or lowered.startswith("/test.html?")
+    )
+
+
 @app.route("/", methods=["GET"])
 def index() -> Response:
     log_request()
@@ -1134,7 +1147,12 @@ def callback() -> Response:
 def login_html() -> Response:
     log_request()
     auth_code = request.args.get("auth_code") or request.args.get("code") or DEBUG_AUTH_CODE
-    target = local_auth_result_url(auth_code, request.args.get("redirect_uri"))
+    redirect_uri = request.args.get("redirect_uri")
+    if is_relative_bnid_redirect(redirect_uri):
+        emit_log(f"[LOCAL LOGIN] Relative redirect_uri={redirect_uri!r}; returning Unity callback page")
+        return puzzle_auth_page(auth_code)
+
+    target = local_auth_result_url(auth_code, redirect_uri)
     emit_log(f"[LOCAL LOGIN] Redirecting login URL to auth result: {target}")
     return redirect(target, code=302)
 
@@ -1148,7 +1166,12 @@ def bnid_login_html() -> Response:
         or request.args.get("code")
         or DEBUG_AUTH_CODE
     )
-    target = local_auth_result_url(auth_code, request.args.get("redirect_uri"))
+    redirect_uri = request.args.get("redirect_uri")
+    if is_relative_bnid_redirect(redirect_uri):
+        emit_log(f"[BNID TEST LOGIN] Relative redirect_uri={redirect_uri!r}; returning Unity callback page")
+        return puzzle_auth_page(auth_code)
+
+    target = local_auth_result_url(auth_code, redirect_uri)
     emit_log(f"[BNID TEST LOGIN] Redirecting host={request.host} to auth result: {target}")
     return redirect(target, code=302)
 
