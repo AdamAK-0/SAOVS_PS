@@ -1086,7 +1086,7 @@ def local_auth_result_url(auth_code: str = DEBUG_AUTH_CODE, redirect_uri: str | 
             separator = "&" if "?" in path else "?"
             origin = os.environ.get(
                 "SAOVS_RELATIVE_AUTH_RESULT_ORIGIN",
-                "https://assets-os.saovs.channel.or.jp",
+                "http://assets-os.saovs.channel.or.jp",
             ).rstrip("/")
             return f"{origin}{path}{separator}code={quote(auth_code, safe='')}"
         return f"{redirect_uri}{separator}code={quote(auth_code, safe='')}"
