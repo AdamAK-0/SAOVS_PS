@@ -37,17 +37,54 @@ REQUEST_DUMP_DIR = LOG_DIR / "request_bodies"
 ADMIN_STATIC_DIR = Path(__file__).with_name("admin_static")
 ADMIN_LOG_READ_BYTES = int(os.environ.get("SAOVS_ADMIN_LOG_READ_BYTES", str(2 * 1024 * 1024)))
 ADMIN_LOG_LIMIT = int(os.environ.get("SAOVS_ADMIN_LOG_LIMIT", "250"))
-SAVED_ANDROID_FILES = Path(
-    os.environ.get("SAOVS_CONTENT_ROOT", SERVER_ROOT / "content" / "files")
-).resolve()
+
+
+def resolve_content_root() -> Path:
+    configured = os.environ.get("SAOVS_CONTENT_ROOT")
+    if configured:
+        return Path(configured).resolve()
+
+    candidates = [
+        SERVER_ROOT / "content" / "files",
+        SERVER_ROOT / "content" / "SAOVS" / "data1" / "com.bandainamcoent.saovsww" / "files",
+        SERVER_ROOT / "content" / "SAOVS" / "data1" / "com.bandaicoent.saovswww" / "files",
+        SERVER_ROOT.parent / "SAOVS_Project" / "SAOVS" / "data1" / "com.bandainamcoent.saovsww" / "files",
+    ]
+    for candidate in candidates:
+        if (candidate / "sword.db").is_file():
+            return candidate.resolve()
+
+    return candidates[0].resolve()
+
+
+SAVED_ANDROID_FILES = resolve_content_root()
+
+
+def offline_login_value(name: str, default: str) -> str:
+    path = SAVED_ANDROID_FILES / "OfflineApi" / "user_login.json"
+    if not path.is_file():
+        return default
+
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except Exception:
+        return default
+
+    value = payload.get(name)
+    if value is None:
+        return default
+    return str(value)
+
+
 SAOVS_OLD_KEY = b"ADrbjQw8UABp9zsBeZjaw7LbMxyfQRZD"
 SAOVS_OLD_IV = b"jJkbN3VV9PAUhCLz"
 SAOVS_NEW_KEY = b"6d14XUUQ9J1xjshP8u5avnqipObMa3tk"
 SAOVS_NEW_IV = b"FJxIPPhFj8o85u9b"
 SAOVS_ASSET_BASE = os.environ.get("SAOVS_ASSET_BASE", "https://assets-os.saovs.channel.or.jp/")
-SAOVS_ASSET_VER = os.environ.get("SAOVS_ASSET_VER", "30000")
-SAOVS_MASTER_DATA_VER = os.environ.get("SAOVS_MASTER_DATA_VER", "30000")
-SAOVS_LOCALIZE_DATA_VER = int(os.environ.get("SAOVS_LOCALIZE_DATA_VER", "30000"))
+SAOVS_ASSET_VER = os.environ.get("SAOVS_ASSET_VER", offline_login_value("assetver", "30000"))
+SAOVS_MASTER_DATA_VER = os.environ.get("SAOVS_MASTER_DATA_VER", offline_login_value("masterver", "202"))
+SAOVS_LOCALIZE_DATA_VER = int(os.environ.get("SAOVS_LOCALIZE_DATA_VER", offline_login_value("localizever", "161")))
 SAOVS_ADMIN_TOKEN = os.environ.get("SAOVS_ADMIN_TOKEN", "")
 SAOVS_ASSET_HOSTS = {
     host.strip().lower()
@@ -968,12 +1005,50 @@ def puzzle_auth_page(auth_code: str = DEBUG_AUTH_CODE) -> Response:
   <meta charset="utf-8">
   <title>SAOVS BNID Debug Callback</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    html, body {{
+      background: #050816;
+      color: #dbeafe;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      height: 100%;
+      margin: 0;
+    }}
+    body {{
+      align-items: center;
+      display: flex;
+      justify-content: center;
+    }}
+    main {{
+      text-align: center;
+    }}
+    .status {{
+      color: #7dd3fc;
+      font-size: 14px;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }}
+  </style>
 </head>
 <body>
+  <main>
+    <div class="status">Returning to SAOVS</div>
+  </main>
   <input type="hidden" id="page_name" value="puzzle_auth_result_page">
   <input type="hidden" id="auth_result" value="{safe_code}">
 
   <script>
+    if (!window.Unity || typeof window.Unity.call !== "function") {{
+      window.Unity = {{
+        call: function(msg) {{
+          var iframe = document.createElement("IFRAME");
+          iframe.setAttribute("src", "unity:" + msg);
+          document.documentElement.appendChild(iframe);
+          iframe.parentNode.removeChild(iframe);
+          iframe = null;
+        }}
+      }};
+    }}
+
     function notifyUnity() {{
       var pageName = document.getElementById("page_name").value;
       if (pageName !== "puzzle_auth_result_page") return;
@@ -981,25 +1056,30 @@ def puzzle_auth_page(auth_code: str = DEBUG_AUTH_CODE) -> Response:
       var authResult = document.getElementById("auth_result").value;
 
       try {{
-        if (window.Unity && typeof window.Unity.call === "function") {{
-          window.Unity.call(authResult);
-          console.log("[SAOVS DEBUG] Unity.call auth_result:", authResult);
-        }}
+        Unity.call(authResult);
+        console.log("[SAOVS DEBUG] Unity.call auth_result:", authResult);
       }} catch (e) {{
         console.log("[SAOVS DEBUG] Unity.call failed:", e);
       }}
     }}
 
     window.addEventListener("load", function() {{
+      notifyUnity();
       setTimeout(notifyUnity, 250);
       setTimeout(notifyUnity, 1000);
       setTimeout(notifyUnity, 2500);
     }});
+    setTimeout(notifyUnity, 5000);
   </script>
 </body>
 </html>
 """
     return Response(html, mimetype="text/html")
+
+
+def local_auth_result_url(auth_code: str = DEBUG_AUTH_CODE) -> str:
+    origin = os.environ.get("SAOVS_AUTH_RESULT_ORIGIN", "http://10.0.2.2").rstrip("/")
+    return f"{origin}/test.html?code={quote(auth_code, safe='')}"
 
 
 @app.route("/", methods=["GET"])
@@ -1049,7 +1129,39 @@ def callback() -> Response:
 @app.route("/login.html", methods=["GET"])
 def login_html() -> Response:
     log_request()
-    return redirect("/?original=" + quote(request.url, safe=""), code=302)
+    auth_code = request.args.get("auth_code") or request.args.get("code") or DEBUG_AUTH_CODE
+    target = local_auth_result_url(auth_code)
+    emit_log(f"[LOCAL LOGIN] Redirecting login URL to auth result: {target}")
+    return redirect(target, code=302)
+
+
+@app.route("/bnid/login", methods=["GET"])
+@app.route("/bnid/login.html", methods=["GET"])
+def bnid_login_html() -> Response:
+    log_request()
+    auth_code = (
+        request.args.get("auth_code")
+        or request.args.get("code")
+        or DEBUG_AUTH_CODE
+    )
+    target = local_auth_result_url(auth_code)
+    emit_log(f"[BNID TEST LOGIN] Redirecting host={request.host} to auth result: {target}")
+    return redirect(target, code=302)
+
+
+@app.route("/bnid/callback", methods=["GET"])
+@app.route("/bnid/test.html", methods=["GET"])
+def bnid_callback() -> Response:
+    log_request()
+    auth_code = (
+        request.args.get("auth_code")
+        or request.args.get("code")
+        or request.args.get("authenticationCode")
+        or request.args.get("access_token")
+        or DEBUG_AUTH_CODE
+    )
+    emit_log(f"[BNID TEST CALLBACK] auth_code={auth_code}")
+    return puzzle_auth_page(auth_code)
 
 
 @app.route("/api/user/checkVersion", methods=["GET", "POST"])
@@ -1303,23 +1415,22 @@ def bootstrap_payload_for_path(path: str) -> dict[str, object] | None:
 def transfer_execute_bnid() -> Response:
     log_request()
     user = get_or_create_user(current_request_uuid())
+    payload = {
+        "uuid": str(user["uuid"]),
+        "userCode": str(user["user_code"]),
+        "userId": int(user["id"]),
+        "playerId": int(user["id"]),
+        "id": int(user["id"]),
+    }
     if wants_saovs_frame():
-        return make_saovs_frame_response(
-            {
-                "uuid": str(user["uuid"]),
-                "userCode": str(user["user_code"]),
-            }
-        )
+        return make_saovs_frame_response(payload)
 
     # This is only a JSON-shaped probe. The real client may expect the normal
     # SAOVS encrypted MessagePack frame before it accepts this response.
     return jsonify(
         {
             "statusCode": 10000,
-            "response": {
-                "uuid": str(user["uuid"]),
-                "userCode": str(user["user_code"]),
-            },
+            "response": payload,
         }
     )
 
