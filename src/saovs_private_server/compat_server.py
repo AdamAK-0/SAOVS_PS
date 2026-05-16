@@ -1084,7 +1084,10 @@ def local_auth_result_url(auth_code: str = DEBUG_AUTH_CODE, redirect_uri: str | 
         if is_relative_bnid_redirect(redirect_uri):
             path = redirect_uri if redirect_uri.startswith("/") else f"/{redirect_uri}"
             separator = "&" if "?" in path else "?"
-            origin = request.url_root.rstrip("/")
+            origin = os.environ.get(
+                "SAOVS_RELATIVE_AUTH_RESULT_ORIGIN",
+                "https://assets-os.saovs.channel.or.jp",
+            ).rstrip("/")
             return f"{origin}{path}{separator}code={quote(auth_code, safe='')}"
         return f"{redirect_uri}{separator}code={quote(auth_code, safe='')}"
 
@@ -1155,7 +1158,7 @@ def login_html() -> Response:
     auth_code = request.args.get("auth_code") or request.args.get("code") or DEBUG_AUTH_CODE
     redirect_uri = request.args.get("redirect_uri")
     if is_relative_bnid_redirect(redirect_uri):
-        emit_log(f"[LOCAL LOGIN] Relative redirect_uri={redirect_uri!r}; redirecting to same-host callback")
+        emit_log(f"[LOCAL LOGIN] Relative redirect_uri={redirect_uri!r}; redirecting to configured callback origin")
 
     target = local_auth_result_url(auth_code, redirect_uri)
     emit_log(f"[LOCAL LOGIN] Redirecting login URL to auth result: {target}")
@@ -1173,7 +1176,7 @@ def bnid_login_html() -> Response:
     )
     redirect_uri = request.args.get("redirect_uri")
     if is_relative_bnid_redirect(redirect_uri):
-        emit_log(f"[BNID TEST LOGIN] Relative redirect_uri={redirect_uri!r}; redirecting to same-host callback")
+        emit_log(f"[BNID TEST LOGIN] Relative redirect_uri={redirect_uri!r}; redirecting to configured callback origin")
 
     target = local_auth_result_url(auth_code, redirect_uri)
     emit_log(f"[BNID TEST LOGIN] Redirecting host={request.host} to auth result: {target}")
