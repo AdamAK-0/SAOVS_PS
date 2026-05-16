@@ -43,8 +43,8 @@ When using a public Let's Encrypt certificate, pass the exported PEM files:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\run_private_server.ps1 `
-  -CertFile "C:\Users\Adam\SAOVS_PS\certs\public-saovs\fullchain.pem" `
-  -KeyFile "C:\Users\Adam\SAOVS_PS\certs\public-saovs\privkey.pem" `
+  -CertFile "C:\SAOVS_PS\certs\public-saovs\fullchain.pem" `
+  -KeyFile "C:\SAOVS_PS\certs\public-saovs\privkey.pem" `
   -AuthResultOrigin http://10.202.154.166
 ```
 
