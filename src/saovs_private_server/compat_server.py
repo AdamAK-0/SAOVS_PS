@@ -27,6 +27,46 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 app = Flask(__name__)
 
+
+def load_env_file(path: Path) -> None:
+    if not path.is_file():
+        return
+
+    for raw_line in path.read_text(encoding="utf-8-sig").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[7:].strip()
+        if "=" not in line:
+            continue
+
+        key, value = line.split("=", 1)
+        key = key.strip().lstrip("\ufeff")
+        value = value.strip()
+        if not key or key in os.environ:
+            continue
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+            value = value[1:-1]
+        os.environ[key] = value
+
+
+def load_local_env() -> None:
+    candidates = [
+        Path.cwd() / ".env",
+        Path(__file__).resolve().parents[2] / ".env",
+    ]
+    loaded: set[Path] = set()
+    for candidate in candidates:
+        resolved = candidate.resolve()
+        if resolved in loaded:
+            continue
+        loaded.add(resolved)
+        load_env_file(resolved)
+
+
+load_local_env()
+
 SERVER_ROOT = Path(os.environ.get("SAOVS_SERVER_ROOT", Path(__file__).resolve().parents[2])).resolve()
 LOG_DIR = Path(os.environ.get("SAOVS_LOG_DIR", SERVER_ROOT / "runtime" / "logs")).resolve()
 DB_FILE = Path(os.environ.get("SAOVS_DB", SERVER_ROOT / "runtime" / "saovs.sqlite3")).resolve()
