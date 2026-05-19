@@ -34,6 +34,7 @@ DEBUG_USER_ID = int(os.environ.get("SAOVS_DEFAULT_USER_ID", "183705490"))
 DEBUG_USER_CODE = int(os.environ.get("SAOVS_DEFAULT_USER_CODE", "46841725594"))
 DEBUG_TUTORIAL_STEP = os.environ.get("SAOVS_DEFAULT_TUTORIAL_STEP", "999")
 DEFAULT_USER_NAME = os.environ.get("SAOVS_DEFAULT_USER_NAME", "Kirito")
+BOOTSTRAP_LOGIN_PASSWORD = "adam"
 LOG_FILE = LOG_DIR / "saovs_private_server.log"
 REQUEST_DUMP_DIR = LOG_DIR / "request_bodies"
 ADMIN_STATIC_DIR = Path(__file__).with_name("admin_static")
@@ -43,7 +44,7 @@ AUTH_CODE_TTL_SECONDS = int(os.environ.get("SAOVS_AUTH_CODE_TTL_SECONDS", "600")
 SESSION_ACTIVE_SECONDS = int(os.environ.get("SAOVS_SESSION_ACTIVE_SECONDS", "1800"))
 PASSWORD_HASH_ITERATIONS = int(os.environ.get("SAOVS_PASSWORD_HASH_ITERATIONS", "180000"))
 DEFAULT_LOGIN_USERNAME = os.environ.get("SAOVS_DEFAULT_LOGIN_USERNAME", "adam")
-DEFAULT_LOGIN_PASSWORD = os.environ.get("SAOVS_DEFAULT_LOGIN_PASSWORD", "")
+DEFAULT_LOGIN_PASSWORD = os.environ.get("SAOVS_DEFAULT_LOGIN_PASSWORD", BOOTSTRAP_LOGIN_PASSWORD)
 ACCOUNT_PAYLOAD_CACHE_VERSION = "account-json-v1"
 
 
@@ -195,6 +196,10 @@ def normalize_login_name(value: str) -> str:
     return value.strip().lower()
 
 
+def bool_from_db(value: object) -> bool:
+    return bool(int(value or 0))
+
+
 def generate_account_uuid() -> str:
     return str(uuidlib.uuid4())
 
@@ -231,22 +236,32 @@ def ensure_default_account(conn: sqlite3.Connection) -> None:
     if not login_name or not DEFAULT_LOGIN_PASSWORD:
         return
 
-    row = conn.execute("SELECT id FROM login_users WHERE username = ?", (login_name,)).fetchone()
+    row = conn.execute("SELECT * FROM login_users WHERE username = ?", (login_name,)).fetchone()
     if row is None:
         conn.execute(
             """
             INSERT INTO login_users
-                (username, password_hash, user_id, display_name, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?)
+                (username, password_hash, user_id, display_name, password_change_required, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 login_name,
                 hash_password(DEFAULT_LOGIN_PASSWORD),
                 DEBUG_USER_ID,
                 DEFAULT_USER_NAME,
+                1 if DEFAULT_LOGIN_PASSWORD == BOOTSTRAP_LOGIN_PASSWORD else 0,
                 now,
                 now,
             ),
+        )
+    elif (
+        DEFAULT_LOGIN_PASSWORD == BOOTSTRAP_LOGIN_PASSWORD
+        and not bool_from_db(row["password_change_required"])
+        and verify_password(BOOTSTRAP_LOGIN_PASSWORD, str(row["password_hash"]))
+    ):
+        conn.execute(
+            "UPDATE login_users SET password_change_required = 1, updated_at = ? WHERE id = ?",
+            (now, int(row["id"])),
         )
 
 
@@ -279,6 +294,7 @@ def init_db() -> None:
                 password_hash TEXT NOT NULL,
                 user_id INTEGER NOT NULL REFERENCES users(id),
                 display_name TEXT NOT NULL,
+                password_change_required INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 last_login_at TEXT
@@ -318,7 +334,19 @@ def init_db() -> None:
             );
             """
         )
+        ensure_schema_migrations(conn)
         ensure_default_account(conn)
+
+
+def ensure_schema_migrations(conn: sqlite3.Connection) -> None:
+    login_columns = {
+        str(row["name"])
+        for row in conn.execute("PRAGMA table_info(login_users)").fetchall()
+    }
+    if "password_change_required" not in login_columns:
+        conn.execute(
+            "ALTER TABLE login_users ADD COLUMN password_change_required INTEGER NOT NULL DEFAULT 0"
+        )
 
 
 def utc_text(value: datetime | None = None) -> str:
@@ -550,6 +578,35 @@ def authenticate_login_user(username: str, password: str) -> dict[str, object] |
         emit_log(f"[AUTH] login username={login_name} user_id={row['user_id']}")
         row = conn.execute("SELECT * FROM login_users WHERE id = ?", (int(row["id"]),)).fetchone()
         return dict(row)
+
+
+def change_login_password(username: str, current_password: str, new_password: str) -> tuple[dict[str, object] | None, str | None]:
+    login_name = normalize_login_name(username)
+    if len(new_password) < 4:
+        return None, "New password must be at least 4 characters."
+    if new_password == BOOTSTRAP_LOGIN_PASSWORD:
+        return None, "Choose a different password."
+
+    with db_connect() as conn:
+        row = conn.execute("SELECT * FROM login_users WHERE username = ?", (login_name,)).fetchone()
+        if row is None or not verify_password(current_password, str(row["password_hash"])):
+            return None, "Invalid username or current password."
+
+        now = utc_text()
+        conn.execute(
+            """
+            UPDATE login_users
+            SET password_hash = ?,
+                password_change_required = 0,
+                last_login_at = ?,
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (hash_password(new_password), now, now, int(row["id"])),
+        )
+        emit_log(f"[AUTH] changed password username={login_name} user_id={row['user_id']}")
+        row = conn.execute("SELECT * FROM login_users WHERE id = ?", (int(row["id"]),)).fetchone()
+        return dict(row), None
 
 
 def issue_auth_code(login_user: dict[str, object]) -> str:
@@ -1500,12 +1557,18 @@ def render_bnid_login_page(
     error: str = "",
     username: str = "",
     player_name: str = "",
+    require_password_change: bool = False,
 ) -> Response:
     safe_action = escape(request.path, quote=True)
     safe_redirect = escape(redirect_uri or "", quote=True)
     safe_error = escape(error, quote=False)
     safe_username = escape(username, quote=True)
     safe_player_name = escape(player_name or username or "", quote=True)
+    bootstrap_notice = (
+        '<p class="notice">This bootstrap login must change its password before continuing.</p>'
+        if require_password_change
+        else ""
+    )
     html = f"""<!doctype html>
 <html>
 <head>
@@ -1597,6 +1660,10 @@ def render_bnid_login_page(
       color: #ffd3d7;
       padding: 10px 12px;
     }}
+    .notice {{
+      margin: 0 0 10px;
+      color: #ffe6a8;
+    }}
   </style>
 </head>
 <body>
@@ -1615,6 +1682,21 @@ def render_bnid_login_page(
           <label for="login-password">Password</label>
           <input id="login-password" name="password" type="password" autocomplete="current-password" required>
           <button type="submit">Login</button>
+        </form>
+      </section>
+      <section>
+        <h2>Change Password</h2>
+        {bootstrap_notice}
+        <form method="post" action="{safe_action}">
+          <input type="hidden" name="mode" value="change_password">
+          <input type="hidden" name="redirect_uri" value="{safe_redirect}">
+          <label for="change-username">Username</label>
+          <input id="change-username" name="username" value="{safe_username}" autocomplete="username" required>
+          <label for="current-password">Current Password</label>
+          <input id="current-password" name="password" type="password" autocomplete="current-password" required>
+          <label for="new-password">New Password</label>
+          <input id="new-password" name="new_password" type="password" autocomplete="new-password" required>
+          <button type="submit">Change Password</button>
         </form>
       </section>
       <section class="secondary">
@@ -1643,17 +1725,28 @@ def handle_bnid_login_post() -> Response:
     redirect_uri = request.form.get("redirect_uri") or request.args.get("redirect_uri")
     username = request.form.get("username", "")
     password = request.form.get("password", "")
+    new_password = request.form.get("new_password", "")
     player_name = request.form.get("player_name", "")
     mode = request.form.get("mode", "login")
 
     if mode == "register":
         login_user, error = create_login_user(username, password, player_name or username)
+    elif mode == "change_password":
+        login_user, error = change_login_password(username, password, new_password)
     else:
         login_user = authenticate_login_user(username, password)
         error = None if login_user else "Invalid username or password."
 
     if error or login_user is None:
         return render_bnid_login_page(redirect_uri, error or "Could not complete login.", username, player_name)
+    if bool_from_db(login_user.get("password_change_required")):
+        return render_bnid_login_page(
+            redirect_uri,
+            "Change this bootstrap password before continuing.",
+            username,
+            player_name,
+            require_password_change=True,
+        )
 
     auth_code = issue_auth_code(login_user)
     target = local_auth_result_url(auth_code, redirect_uri)
