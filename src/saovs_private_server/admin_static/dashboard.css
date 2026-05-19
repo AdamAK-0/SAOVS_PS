@@ -597,7 +597,7 @@ h3 {
 
 .player-row {
   display: grid;
-  grid-template-columns: 86px minmax(130px, 1fr) minmax(120px, 1fr) 110px;
+  grid-template-columns: 86px minmax(130px, 1fr) minmax(120px, 1fr) minmax(160px, 0.8fr);
   gap: 10px;
   align-items: center;
   min-height: 52px;
