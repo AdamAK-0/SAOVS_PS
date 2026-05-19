@@ -8,9 +8,11 @@ import json
 import logging
 import os
 import secrets
+import smtplib
 import sqlite3
 import uuid as uuidlib
 from datetime import datetime, timedelta, timezone
+from email.message import EmailMessage
 from html import escape
 from pathlib import Path
 from re import search, sub
@@ -43,6 +45,16 @@ ADMIN_LOG_LIMIT = int(os.environ.get("SAOVS_ADMIN_LOG_LIMIT", "250"))
 AUTH_CODE_TTL_SECONDS = int(os.environ.get("SAOVS_AUTH_CODE_TTL_SECONDS", "600"))
 SESSION_ACTIVE_SECONDS = int(os.environ.get("SAOVS_SESSION_ACTIVE_SECONDS", "1800"))
 PASSWORD_HASH_ITERATIONS = int(os.environ.get("SAOVS_PASSWORD_HASH_ITERATIONS", "180000"))
+EMAIL_CODE_TTL_SECONDS = int(os.environ.get("SAOVS_EMAIL_CODE_TTL_SECONDS", "300"))
+EMAIL_CODE_ATTEMPT_LIMIT = int(os.environ.get("SAOVS_EMAIL_CODE_ATTEMPT_LIMIT", "10"))
+EMAIL_CODE_RESEND_SECONDS = int(os.environ.get("SAOVS_EMAIL_CODE_RESEND_SECONDS", "60"))
+REQUIRE_EMAIL_VERIFICATION = os.environ.get("SAOVS_REQUIRE_EMAIL_VERIFICATION", "1") != "0"
+SMTP_HOST = os.environ.get("SAOVS_SMTP_HOST", "")
+SMTP_PORT = int(os.environ.get("SAOVS_SMTP_PORT", "587"))
+SMTP_USERNAME = os.environ.get("SAOVS_SMTP_USERNAME", "")
+SMTP_PASSWORD = os.environ.get("SAOVS_SMTP_PASSWORD", "")
+SMTP_FROM = os.environ.get("SAOVS_SMTP_FROM", SMTP_USERNAME or "noreply@saovs.com")
+SMTP_USE_TLS = os.environ.get("SAOVS_SMTP_USE_TLS", "1") != "0"
 DEFAULT_LOGIN_USERNAME = os.environ.get("SAOVS_DEFAULT_LOGIN_USERNAME", "adam")
 DEFAULT_LOGIN_PASSWORD = os.environ.get("SAOVS_DEFAULT_LOGIN_PASSWORD", BOOTSTRAP_LOGIN_PASSWORD)
 ACCOUNT_PAYLOAD_CACHE_VERSION = "account-json-v1"
@@ -196,6 +208,10 @@ def normalize_login_name(value: str) -> str:
     return value.strip().lower()
 
 
+def is_valid_email(value: str) -> bool:
+    return bool(search(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", value.strip()))
+
+
 def bool_from_db(value: object) -> bool:
     return bool(int(value or 0))
 
@@ -313,6 +329,17 @@ def init_db() -> None:
             );
 
             CREATE INDEX IF NOT EXISTS idx_auth_codes_user_id ON auth_codes(user_id);
+
+            CREATE TABLE IF NOT EXISTS email_verification_codes (
+                email TEXT PRIMARY KEY,
+                code_hash TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                attempts INTEGER NOT NULL DEFAULT 0
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_email_verification_codes_expires_at
+                ON email_verification_codes(expires_at);
 
             CREATE TABLE IF NOT EXISTS device_links (
                 platform_user_id TEXT PRIMARY KEY,
@@ -526,8 +553,8 @@ def issue_or_reuse_session(user_id: int) -> str:
 def create_login_user(username: str, password: str, display_name: str) -> tuple[dict[str, object] | None, str | None]:
     login_name = normalize_login_name(username)
     player_name = (display_name or username or DEFAULT_USER_NAME).strip()[:32] or DEFAULT_USER_NAME
-    if len(login_name) < 3:
-        return None, "Username must be at least 3 characters."
+    if not is_valid_email(login_name):
+        return None, "Enter a valid email address."
     if len(password) < 4:
         return None, "Password must be at least 4 characters."
 
@@ -536,7 +563,7 @@ def create_login_user(username: str, password: str, display_name: str) -> tuple[
         with db_connect() as conn:
             existing = conn.execute("SELECT 1 FROM login_users WHERE username = ?", (login_name,)).fetchone()
             if existing is not None:
-                return None, "That username is already registered."
+                return None, "That email is already registered."
 
             account_uuid = generate_account_uuid()
             user_code = generate_user_code(conn)
@@ -558,10 +585,10 @@ def create_login_user(username: str, password: str, display_name: str) -> tuple[
                 (login_name, hash_password(password), user_id, player_name, now, now),
             )
             row = conn.execute("SELECT * FROM login_users WHERE username = ?", (login_name,)).fetchone()
-            emit_log(f"[AUTH] registered username={login_name} user_id={user_id}")
+            emit_log(f"[AUTH] registered email={login_name} user_id={user_id}")
             return dict(row), None
     except sqlite3.IntegrityError:
-        return None, "That username is already registered."
+        return None, "That email is already registered."
 
 
 def authenticate_login_user(username: str, password: str) -> dict[str, object] | None:
@@ -607,6 +634,119 @@ def change_login_password(username: str, current_password: str, new_password: st
         emit_log(f"[AUTH] changed password username={login_name} user_id={row['user_id']}")
         row = conn.execute("SELECT * FROM login_users WHERE id = ?", (int(row["id"]),)).fetchone()
         return dict(row), None
+
+
+def generate_email_code() -> str:
+    return f"{secrets.randbelow(1_000_000):06d}"
+
+
+def create_email_verification_code(email: str) -> str:
+    login_name = normalize_login_name(email)
+    code = generate_email_code()
+    now = datetime.now(timezone.utc)
+    expires_at = now + timedelta(seconds=EMAIL_CODE_TTL_SECONDS)
+    with db_connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO email_verification_codes
+                (email, code_hash, created_at, expires_at, attempts)
+            VALUES (?, ?, ?, ?, 0)
+            ON CONFLICT(email) DO UPDATE SET
+                code_hash = excluded.code_hash,
+                created_at = excluded.created_at,
+                expires_at = excluded.expires_at,
+                attempts = 0
+            """,
+            (login_name, hash_password(code), utc_text(now), utc_text(expires_at)),
+        )
+    return code
+
+
+def send_verification_email(email: str, code: str) -> bool:
+    if not SMTP_HOST:
+        emit_log(f"[EMAIL DEV] registration code for {email}: {code}")
+        return False
+
+    message = EmailMessage()
+    message["Subject"] = "SAOVS registration code"
+    message["From"] = SMTP_FROM
+    message["To"] = email
+    message.set_content(
+        f"Your SAOVS registration code is {code}.\n\n"
+        f"It expires in {max(1, EMAIL_CODE_TTL_SECONDS // 60)} minutes."
+    )
+
+    try:
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=15) as smtp:
+            if SMTP_USE_TLS:
+                smtp.starttls()
+            if SMTP_USERNAME or SMTP_PASSWORD:
+                smtp.login(SMTP_USERNAME, SMTP_PASSWORD)
+            smtp.send_message(message)
+        emit_log(f"[EMAIL] sent registration code to {email}")
+        return True
+    except Exception as exc:
+        emit_log(f"[EMAIL] failed to send registration code to {email}: {exc}")
+        emit_log(f"[EMAIL DEV] registration code for {email}: {code}")
+        return False
+
+
+def request_registration_code(email: str) -> tuple[bool, str]:
+    login_name = normalize_login_name(email)
+    if not is_valid_email(login_name):
+        return False, "Enter a valid email address."
+
+    resend_cutoff = utc_text(datetime.now(timezone.utc) - timedelta(seconds=EMAIL_CODE_RESEND_SECONDS))
+    with db_connect() as conn:
+        existing = conn.execute("SELECT 1 FROM login_users WHERE username = ?", (login_name,)).fetchone()
+        recent_code = conn.execute(
+            "SELECT created_at FROM email_verification_codes WHERE email = ? AND created_at > ?",
+            (login_name, resend_cutoff),
+        ).fetchone()
+    if existing is not None:
+        return False, "That email is already registered."
+    if recent_code is not None:
+        return False, "Please wait before requesting another code."
+
+    code = create_email_verification_code(login_name)
+    sent = send_verification_email(login_name, code)
+    if sent:
+        return True, "Verification code sent. It expires in 5 minutes."
+    return True, "Verification code generated. Check the server log. It expires in 5 minutes."
+
+
+def verify_registration_code(email: str, code: str) -> tuple[bool, str | None]:
+    if not REQUIRE_EMAIL_VERIFICATION:
+        return True, None
+
+    login_name = normalize_login_name(email)
+    submitted_code = code.strip()
+    if not search(r"^\d{6}$", submitted_code):
+        return False, "Enter the 6-digit verification code."
+
+    now = utc_text()
+    with db_connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM email_verification_codes WHERE email = ?",
+            (login_name,),
+        ).fetchone()
+        if row is None:
+            return False, "Request a verification code first."
+        if str(row["expires_at"]) < now:
+            conn.execute("DELETE FROM email_verification_codes WHERE email = ?", (login_name,))
+            return False, "Verification code expired. Request a new one."
+        if int(row["attempts"]) >= EMAIL_CODE_ATTEMPT_LIMIT:
+            conn.execute("DELETE FROM email_verification_codes WHERE email = ?", (login_name,))
+            return False, "Too many code attempts. Request a new one."
+        if not verify_password(submitted_code, str(row["code_hash"])):
+            conn.execute(
+                "UPDATE email_verification_codes SET attempts = attempts + 1 WHERE email = ?",
+                (login_name,),
+            )
+            return False, "Invalid verification code."
+
+        conn.execute("DELETE FROM email_verification_codes WHERE email = ?", (login_name,))
+        return True, None
 
 
 def issue_auth_code(login_user: dict[str, object]) -> str:
@@ -747,7 +887,13 @@ def log_entry_category(path: str, raw: str) -> str:
         return "asset"
     if lower_path.startswith("/admin"):
         return "admin"
-    if "transfer" in lower_path or "bnid" in lower_path or "login.html" in lower_path:
+    if (
+        "transfer" in lower_path
+        or "bnid" in lower_path
+        or "login.html" in lower_path
+        or "register.html" in lower_path
+        or "change-password.html" in lower_path
+    ):
         return "auth"
     if lower_path.startswith("/api/") or "/api/" in lower_path:
         return "api"
@@ -1051,7 +1197,14 @@ def log_request() -> None:
 
 
 def is_sensitive_form_request() -> bool:
-    if request.path not in {"/", "/login.html", "/bnid/login", "/bnid/login.html"}:
+    if request.path not in {
+        "/",
+        "/login.html",
+        "/register.html",
+        "/change-password.html",
+        "/bnid/login",
+        "/bnid/login.html",
+    }:
         return False
     content_type = request.headers.get("Content-Type", "")
     return "application/x-www-form-urlencoded" in content_type or "multipart/form-data" in content_type
@@ -1552,35 +1705,41 @@ def puzzle_auth_page(auth_code: str = DEBUG_AUTH_CODE) -> Response:
     return Response(html, mimetype="text/html")
 
 
-def render_bnid_login_page(
-    redirect_uri: str | None = None,
+def account_page_url(path: str, redirect_uri: str | None = None) -> str:
+    if not redirect_uri:
+        return path
+    return f"{path}?redirect_uri={quote(redirect_uri, safe='')}"
+
+
+def current_login_action() -> str:
+    if request.path in {"/login.html", "/bnid/login", "/bnid/login.html"}:
+        return request.path
+    return "/login.html"
+
+
+def render_account_shell(
+    title: str,
+    intro: str,
+    body: str,
     error: str = "",
-    username: str = "",
-    player_name: str = "",
-    require_password_change: bool = False,
+    message: str = "",
 ) -> Response:
-    safe_action = escape(request.path, quote=True)
-    safe_redirect = escape(redirect_uri or "", quote=True)
+    safe_title = escape(title, quote=False)
+    safe_intro = escape(intro, quote=False)
     safe_error = escape(error, quote=False)
-    safe_username = escape(username, quote=True)
-    safe_player_name = escape(player_name or username or "", quote=True)
-    bootstrap_notice = (
-        '<p class="notice">This bootstrap login must change its password before continuing.</p>'
-        if require_password_change
-        else ""
-    )
+    safe_message = escape(message, quote=False)
     html = f"""<!doctype html>
 <html>
 <head>
   <meta charset="utf-8">
-  <title>SAOVS Account Login</title>
+  <title>{safe_title}</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <style>
     * {{ box-sizing: border-box; }}
     html, body {{
       min-height: 100%;
       margin: 0;
-      background: #08111f;
+      background: #07111f;
       color: #eef6ff;
       font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }}
@@ -1590,39 +1749,27 @@ def render_bnid_login_page(
       padding: 18px;
     }}
     main {{
-      width: min(520px, 100%);
-      border: 1px solid rgba(125, 211, 252, 0.28);
+      width: min(430px, 100%);
+      border: 1px solid rgba(56, 189, 248, 0.28);
       border-radius: 8px;
-      background: #101d2e;
+      background: #101b2b;
       padding: 22px;
-      box-shadow: 0 18px 50px rgba(0, 0, 0, 0.35);
+      box-shadow: 0 18px 45px rgba(0, 0, 0, 0.36);
     }}
     h1 {{
       margin: 0 0 6px;
-      font-size: 25px;
+      font-size: 24px;
       line-height: 1.2;
     }}
     p {{
       margin: 0 0 18px;
-      color: #a7bbd4;
+      color: #a8bbd1;
       line-height: 1.45;
-    }}
-    .grid {{
-      display: grid;
-      gap: 18px;
-    }}
-    section {{
-      border-top: 1px solid rgba(255,255,255,0.1);
-      padding-top: 16px;
-    }}
-    h2 {{
-      margin: 0 0 12px;
-      font-size: 17px;
     }}
     label {{
       display: block;
-      margin: 10px 0 6px;
-      color: #cbd9ea;
+      margin: 11px 0 6px;
+      color: #cad9ea;
       font-size: 13px;
       font-weight: 700;
     }}
@@ -1636,84 +1783,81 @@ def render_bnid_login_page(
       font-size: 16px;
       padding: 10px 12px;
     }}
-    button {{
+    button, .link-button {{
+      align-items: center;
+      display: inline-flex;
+      justify-content: center;
       width: 100%;
-      min-height: 48px;
-      margin-top: 14px;
+      min-height: 46px;
       border: 0;
       border-radius: 8px;
-      background: #23d6ff;
+      background: #31d7ff;
       color: #03111d;
       font-size: 16px;
       font-weight: 800;
+      text-decoration: none;
     }}
-    .secondary button {{
-      background: #24384f;
-      color: #eef6ff;
+    button {{
+      margin-top: 14px;
+    }}
+    .button-row {{
+      display: grid;
+      gap: 10px;
+      grid-template-columns: 1fr;
+      margin-top: 14px;
+    }}
+    .button-row button {{
+      margin-top: 0;
+    }}
+    .secondary {{
+      background: #26394f;
       border: 1px solid rgba(125, 211, 252, 0.32);
+      color: #eef6ff;
+    }}
+    .links {{
+      display: grid;
+      gap: 10px;
+      grid-template-columns: 1fr 1fr;
+      margin-top: 16px;
+    }}
+    .links.single {{
+      grid-template-columns: 1fr;
+    }}
+    .error, .message {{
+      margin-bottom: 14px;
+      border-radius: 8px;
+      padding: 10px 12px;
+      line-height: 1.35;
     }}
     .error {{
-      margin-bottom: 14px;
       border: 1px solid rgba(255, 109, 116, 0.55);
-      border-radius: 8px;
       background: rgba(255, 109, 116, 0.11);
       color: #ffd3d7;
-      padding: 10px 12px;
     }}
-    .notice {{
-      margin: 0 0 10px;
-      color: #ffe6a8;
+    .message {{
+      border: 1px solid rgba(52, 211, 153, 0.5);
+      background: rgba(52, 211, 153, 0.1);
+      color: #c7ffe7;
+    }}
+    .hint {{
+      margin: 8px 0 0;
+      color: #9fb4cc;
+      font-size: 13px;
+    }}
+    @media (min-width: 440px) {{
+      .button-row {{
+        grid-template-columns: 1fr 1fr;
+      }}
     }}
   </style>
 </head>
 <body>
   <main>
-    <h1>SAOVS Account</h1>
-    <p>Log in to an existing private-server account or create a new one.</p>
+    <h1>{safe_title}</h1>
+    <p>{safe_intro}</p>
     {f'<div class="error">{safe_error}</div>' if error else ''}
-    <div class="grid">
-      <section>
-        <h2>Login</h2>
-        <form method="post" action="{safe_action}">
-          <input type="hidden" name="mode" value="login">
-          <input type="hidden" name="redirect_uri" value="{safe_redirect}">
-          <label for="login-username">Username</label>
-          <input id="login-username" name="username" value="{safe_username}" autocomplete="username" required>
-          <label for="login-password">Password</label>
-          <input id="login-password" name="password" type="password" autocomplete="current-password" required>
-          <button type="submit">Login</button>
-        </form>
-      </section>
-      <section>
-        <h2>Change Password</h2>
-        {bootstrap_notice}
-        <form method="post" action="{safe_action}">
-          <input type="hidden" name="mode" value="change_password">
-          <input type="hidden" name="redirect_uri" value="{safe_redirect}">
-          <label for="change-username">Username</label>
-          <input id="change-username" name="username" value="{safe_username}" autocomplete="username" required>
-          <label for="current-password">Current Password</label>
-          <input id="current-password" name="password" type="password" autocomplete="current-password" required>
-          <label for="new-password">New Password</label>
-          <input id="new-password" name="new_password" type="password" autocomplete="new-password" required>
-          <button type="submit">Change Password</button>
-        </form>
-      </section>
-      <section class="secondary">
-        <h2>Create New User</h2>
-        <form method="post" action="{safe_action}">
-          <input type="hidden" name="mode" value="register">
-          <input type="hidden" name="redirect_uri" value="{safe_redirect}">
-          <label for="register-username">Username</label>
-          <input id="register-username" name="username" value="{safe_username}" autocomplete="username" required>
-          <label for="register-password">Password</label>
-          <input id="register-password" name="password" type="password" autocomplete="new-password" required>
-          <label for="player-name">Player Name</label>
-          <input id="player-name" name="player_name" value="{safe_player_name}" maxlength="32">
-          <button type="submit">Create Account</button>
-        </form>
-      </section>
-    </div>
+    {f'<div class="message">{safe_message}</div>' if message else ''}
+    {body}
   </main>
 </body>
 </html>
@@ -1721,36 +1865,209 @@ def render_bnid_login_page(
     return Response(html, mimetype="text/html")
 
 
+def render_login_page(
+    redirect_uri: str | None = None,
+    error: str = "",
+    username: str = "",
+) -> Response:
+    safe_action = escape(current_login_action(), quote=True)
+    safe_redirect = escape(redirect_uri or "", quote=True)
+    safe_username = escape(username, quote=True)
+    register_href = escape(account_page_url("/register.html", redirect_uri), quote=True)
+    change_href = escape(account_page_url("/change-password.html", redirect_uri), quote=True)
+    body = f"""
+    <form method="post" action="{safe_action}">
+      <input type="hidden" name="mode" value="login">
+      <input type="hidden" name="redirect_uri" value="{safe_redirect}">
+      <label for="login-email">Email</label>
+      <input id="login-email" name="email" value="{safe_username}" autocomplete="username" required>
+      <label for="login-password">Password</label>
+      <input id="login-password" name="password" type="password" autocomplete="current-password" required>
+      <button type="submit">Login</button>
+    </form>
+    <div class="links">
+      <a class="link-button secondary" href="{register_href}">Create Account</a>
+      <a class="link-button secondary" href="{change_href}">Change Password</a>
+    </div>
+"""
+    return render_account_shell("SAOVS Login", "Use your private-server account to continue.", body, error=error)
+
+
+def render_register_page(
+    redirect_uri: str | None = None,
+    error: str = "",
+    message: str = "",
+    email: str = "",
+    player_name: str = "",
+) -> Response:
+    safe_action = escape(account_page_url("/register.html", redirect_uri), quote=True)
+    safe_redirect = escape(redirect_uri or "", quote=True)
+    safe_email = escape(email, quote=True)
+    safe_player_name = escape(player_name or "", quote=True)
+    login_href = escape(account_page_url("/login.html", redirect_uri), quote=True)
+    verification_fields = ""
+    send_code_button = ""
+    if REQUIRE_EMAIL_VERIFICATION:
+        verification_fields = """
+      <label for="register-code">6-Digit Code</label>
+      <input id="register-code" name="verification_code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6">
+"""
+        send_code_button = '<button class="secondary" type="submit" name="mode" value="send_code">Send Code</button>'
+
+    body = f"""
+    <form method="post" action="{safe_action}">
+      <input type="hidden" name="redirect_uri" value="{safe_redirect}">
+      <label for="register-email">Email</label>
+      <input id="register-email" name="email" value="{safe_email}" type="email" autocomplete="email" required>
+      {verification_fields}
+      <label for="register-password">Password</label>
+      <input id="register-password" name="password" type="password" autocomplete="new-password">
+      <label for="player-name">Player Name</label>
+      <input id="player-name" name="player_name" value="{safe_player_name}" maxlength="32">
+      <div class="button-row">
+        {send_code_button}
+        <button type="submit" name="mode" value="register">Create Account</button>
+      </div>
+    </form>
+    <div class="links single">
+      <a class="link-button secondary" href="{login_href}">Back To Login</a>
+    </div>
+"""
+    return render_account_shell(
+        "Create Account",
+        "Register with email verification before entering the game.",
+        body,
+        error=error,
+        message=message,
+    )
+
+
+def render_change_password_page(
+    redirect_uri: str | None = None,
+    error: str = "",
+    message: str = "",
+    username: str = "",
+) -> Response:
+    safe_action = escape(account_page_url("/change-password.html", redirect_uri), quote=True)
+    safe_redirect = escape(redirect_uri or "", quote=True)
+    safe_username = escape(username, quote=True)
+    login_href = escape(account_page_url("/login.html", redirect_uri), quote=True)
+    body = f"""
+    <form method="post" action="{safe_action}">
+      <input type="hidden" name="mode" value="change_password">
+      <input type="hidden" name="redirect_uri" value="{safe_redirect}">
+      <label for="change-email">Email</label>
+      <input id="change-email" name="email" value="{safe_username}" autocomplete="username" required>
+      <label for="current-password">Current Password</label>
+      <input id="current-password" name="password" type="password" autocomplete="current-password" required>
+      <label for="new-password">New Password</label>
+      <input id="new-password" name="new_password" type="password" autocomplete="new-password" required>
+      <button type="submit">Change Password</button>
+    </form>
+    <div class="links single">
+      <a class="link-button secondary" href="{login_href}">Back To Login</a>
+    </div>
+"""
+    return render_account_shell(
+        "Change Password",
+        "Confirm the old password before setting a new one.",
+        body,
+        error=error,
+        message=message,
+    )
+
+
+def render_bnid_login_page(
+    redirect_uri: str | None = None,
+    error: str = "",
+    username: str = "",
+    player_name: str = "",
+    require_password_change: bool = False,
+) -> Response:
+    if require_password_change:
+        return render_change_password_page(redirect_uri, error, username=username)
+    return render_login_page(redirect_uri, error, username)
+
+
 def handle_bnid_login_post() -> Response:
-    redirect_uri = request.form.get("redirect_uri") or request.args.get("redirect_uri")
-    username = request.form.get("username", "")
-    password = request.form.get("password", "")
-    new_password = request.form.get("new_password", "")
-    player_name = request.form.get("player_name", "")
     mode = request.form.get("mode", "login")
+    if mode in {"register", "send_code"}:
+        return handle_register_post()
+    if mode == "change_password":
+        return handle_change_password_post()
 
-    if mode == "register":
-        login_user, error = create_login_user(username, password, player_name or username)
-    elif mode == "change_password":
-        login_user, error = change_login_password(username, password, new_password)
-    else:
-        login_user = authenticate_login_user(username, password)
-        error = None if login_user else "Invalid username or password."
+    redirect_uri = request.form.get("redirect_uri") or request.args.get("redirect_uri")
+    username = request.form.get("email") or request.form.get("username", "")
+    password = request.form.get("password", "")
 
-    if error or login_user is None:
-        return render_bnid_login_page(redirect_uri, error or "Could not complete login.", username, player_name)
+    login_user = authenticate_login_user(username, password)
+    if login_user is None:
+        return render_login_page(redirect_uri, "Invalid email or password.", username)
     if bool_from_db(login_user.get("password_change_required")):
-        return render_bnid_login_page(
+        return render_change_password_page(
             redirect_uri,
             "Change this bootstrap password before continuing.",
-            username,
-            player_name,
-            require_password_change=True,
+            username=username,
         )
 
     auth_code = issue_auth_code(login_user)
     target = local_auth_result_url(auth_code, redirect_uri)
-    emit_log(f"[AUTH] returning auth_result for username={normalize_login_name(username)} user_id={login_user['user_id']}")
+    emit_log(f"[AUTH] returning auth_result for login={normalize_login_name(username)} user_id={login_user['user_id']}")
+    return redirect(target, code=302)
+
+
+def handle_register_post() -> Response:
+    redirect_uri = request.form.get("redirect_uri") or request.args.get("redirect_uri")
+    email = request.form.get("email") or request.form.get("username", "")
+    login_email = normalize_login_name(email)
+    password = request.form.get("password", "")
+    player_name = request.form.get("player_name", "")
+    mode = request.form.get("mode", "register")
+
+    if mode == "send_code":
+        ok, message = request_registration_code(email)
+        if ok:
+            return render_register_page(redirect_uri, message=message, email=login_email, player_name=player_name)
+        return render_register_page(redirect_uri, error=message, email=email, player_name=player_name)
+
+    if not is_valid_email(login_email):
+        return render_register_page(redirect_uri, error="Enter a valid email address.", email=email, player_name=player_name)
+    if len(password) < 4:
+        return render_register_page(redirect_uri, error="Password must be at least 4 characters.", email=login_email, player_name=player_name)
+    with db_connect() as conn:
+        existing = conn.execute("SELECT 1 FROM login_users WHERE username = ?", (login_email,)).fetchone()
+    if existing is not None:
+        return render_register_page(redirect_uri, error="That email is already registered.", email=login_email, player_name=player_name)
+
+    if REQUIRE_EMAIL_VERIFICATION:
+        ok, error = verify_registration_code(email, request.form.get("verification_code", ""))
+        if not ok:
+            return render_register_page(redirect_uri, error=error or "Could not verify email.", email=email, player_name=player_name)
+
+    display_name = player_name or login_email.split("@", 1)[0] or DEFAULT_USER_NAME
+    login_user, error = create_login_user(login_email, password, display_name)
+    if error or login_user is None:
+        return render_register_page(redirect_uri, error=error or "Could not create account.", email=login_email, player_name=player_name)
+
+    auth_code = issue_auth_code(login_user)
+    target = local_auth_result_url(auth_code, redirect_uri)
+    emit_log(f"[AUTH] returning auth_result for login={login_email} user_id={login_user['user_id']}")
+    return redirect(target, code=302)
+
+
+def handle_change_password_post() -> Response:
+    redirect_uri = request.form.get("redirect_uri") or request.args.get("redirect_uri")
+    username = request.form.get("email") or request.form.get("username", "")
+    password = request.form.get("password", "")
+    new_password = request.form.get("new_password", "")
+
+    login_user, error = change_login_password(username, password, new_password)
+    if error or login_user is None:
+        return render_change_password_page(redirect_uri, error or "Could not change password.", username=username)
+
+    auth_code = issue_auth_code(login_user)
+    target = local_auth_result_url(auth_code, redirect_uri)
+    emit_log(f"[AUTH] returning auth_result after password change for login={normalize_login_name(username)} user_id={login_user['user_id']}")
     return redirect(target, code=302)
 
 
@@ -1841,6 +2158,24 @@ def login_html() -> Response:
     if is_relative_bnid_redirect(redirect_uri):
         emit_log(f"[LOCAL LOGIN] Relative redirect_uri={redirect_uri!r}; rendering account login page")
     return render_bnid_login_page(redirect_uri)
+
+
+@app.route("/register.html", methods=["GET", "POST"])
+def register_html() -> Response:
+    log_request()
+    redirect_uri = request.args.get("redirect_uri")
+    if request.method == "POST":
+        return handle_register_post()
+    return render_register_page(redirect_uri)
+
+
+@app.route("/change-password.html", methods=["GET", "POST"])
+def change_password_html() -> Response:
+    log_request()
+    redirect_uri = request.args.get("redirect_uri")
+    if request.method == "POST":
+        return handle_change_password_post()
+    return render_change_password_page(redirect_uri)
 
 
 @app.route("/bnid/login", methods=["GET", "POST"])
