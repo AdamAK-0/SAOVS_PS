@@ -79,8 +79,8 @@ C:\Users\Adam\SAOVS_Project\SAOVS\data1\com.bandainamcoent.saovsww\files
 Check health:
 
 ```powershell
-curl http://127.0.0.1:8000/admin/health
-curl http://127.0.0.1:8000/admin/users
+curl.exe -u admin:admin http://127.0.0.1:8000/admin/health
+curl.exe -u admin:admin http://127.0.0.1:8000/admin/users
 ```
 
 Open the admin dashboard:
@@ -106,16 +106,18 @@ powershell -ExecutionPolicy Bypass -File scripts\stop_private_server.ps1
 - `docs/DEPLOYMENT.md` - reverse proxy and public TLS notes.
   It also explains why the 3.7 GB content folder should stay outside GitHub.
 
-Set `SAOVS_ADMIN_TOKEN` before exposing the server. When that variable is set,
-admin JSON routes require the token in `X-Admin-Token` or `?token=...`. The
-dashboard page still loads so you can paste the token into the UI.
+Set `SAOVS_ADMIN_USERNAME` and `SAOVS_ADMIN_PASSWORD` before exposing the
+server. They default to `admin` / `admin` for local setup, so change them in
+`.env` on any shared or public host. `SAOVS_ADMIN_TOKEN` is still accepted for
+scripted JSON API access.
 
 ## Admin Dashboard
 
-The server includes a browser dashboard at `/admin`. It shows server health,
-known users, live parsed request/reply logs, asset/API/auth categories, and a
-raw detail pane for each log entry. The dashboard also has search, filtering,
-auto-refresh, and a clear-logs action.
+The server includes a browser dashboard at `/admin`. It is protected with HTTP
+Basic authentication. It shows server health, known users, live parsed
+request/reply logs, asset/API/auth categories, and a raw detail pane for each
+log entry. The dashboard also has search, filtering, auto-refresh, player
+deletion, and a clear-logs action.
 
 The default art is original SAO-inspired dashboard artwork. For a private local
 setup, you can drop your own owned/downloaded images into:
@@ -137,9 +139,8 @@ GET  /admin/api/logs?limit=250
 POST /admin/api/logs/clear
 ```
 
-If `SAOVS_ADMIN_TOKEN` is set, paste the same token into the dashboard token
-field. The UI stores it in browser local storage and sends it as
-`X-Admin-Token`.
+Log in with `SAOVS_ADMIN_USERNAME` and `SAOVS_ADMIN_PASSWORD`. If
+`SAOVS_ADMIN_TOKEN` is set, scripts can still pass it via `X-Admin-Token`.
 
 ## Public Deployment Shape
 
@@ -174,7 +175,6 @@ The next practical server milestones are:
 - Replace hard-coded bootstrap inventory/party responses with SQLite-backed
   records.
 - Add account recovery/transfer code management.
-- Add admin authentication before exposing `/admin/*`.
 - Split static assets to object storage/CDN once paths are stable.
 - Record and implement each missing gameplay route from `runtime/logs`.
 
