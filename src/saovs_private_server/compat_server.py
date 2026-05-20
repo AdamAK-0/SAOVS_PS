@@ -295,6 +295,25 @@ def ensure_default_account(conn: sqlite3.Connection) -> None:
         return
 
     row = conn.execute("SELECT * FROM login_users WHERE username = ?", (login_name,)).fetchone()
+    legacy_login_name = normalize_login_name("adam")
+    if row is None and login_name != legacy_login_name:
+        legacy_row = conn.execute(
+            "SELECT * FROM login_users WHERE username = ? AND user_id = ?",
+            (legacy_login_name, DEBUG_USER_ID),
+        ).fetchone()
+        if legacy_row is not None:
+            conn.execute(
+                """
+                UPDATE login_users
+                SET username = ?,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (login_name, now, int(legacy_row["id"])),
+            )
+            emit_log(f"[AUTH] migrated default login username from {legacy_login_name} to {login_name}")
+            row = conn.execute("SELECT * FROM login_users WHERE username = ?", (login_name,)).fetchone()
+
     if row is None:
         conn.execute(
             """
