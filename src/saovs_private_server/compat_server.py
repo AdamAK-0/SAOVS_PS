@@ -136,6 +136,10 @@ CUSTOMIZER_HOSTS = {
     ).split(",")
     if host.strip()
 }
+CUSTOMIZER_PUBLIC_URL = os.environ.get(
+    "SAOVS_CUSTOMIZER_PUBLIC_URL",
+    "https://customizeequipment.saovs.com/",
+)
 ABILITY_CATALOG_CACHE: dict[int, dict[str, object]] | None = None
 
 
@@ -3355,6 +3359,16 @@ def render_account_shell(
       color: #9fb4cc;
       font-size: 13px;
     }}
+    .hint a {{
+      color: #f3c969;
+      font-weight: 850;
+      text-decoration: underline;
+      text-underline-offset: 3px;
+    }}
+    .hint a:focus,
+    .hint a:hover {{
+      color: #ffe29a;
+    }}
     @media (min-width: 440px) {{
       .button-row {{
         grid-template-columns: 1fr 1fr;
@@ -3386,6 +3400,10 @@ def render_login_page(
     safe_username = escape(username, quote=True)
     register_href = escape(account_page_url("/register.html", redirect_uri), quote=True)
     reset_href = escape(account_page_url("/reset-password.html", redirect_uri), quote=True)
+    customizer_url = CUSTOMIZER_PUBLIC_URL.rstrip("/") + "/"
+    safe_customizer_href = escape(customizer_url, quote=True)
+    customizer_host = urlparse(customizer_url).hostname or customizer_url
+    safe_customizer_host = escape(customizer_host, quote=False)
     body = f"""
     <form method="post" action="{safe_action}">
       <input type="hidden" name="mode" value="login">
@@ -3400,7 +3418,7 @@ def render_login_page(
       <a class="link-button secondary" href="{register_href}">Create Account</a>
       <a class="link-button secondary" href="{reset_href}">Reset Password</a>
     </div>
-    <p class="hint">Customize equipment at customizeequipement.saovs.com</p>
+    <p class="hint">Customize equipment at <a href="{safe_customizer_href}">{safe_customizer_host}</a></p>
 """
     return render_account_shell("SAOVS Login", "Use your private-server account to continue.", body, error=error)
 
