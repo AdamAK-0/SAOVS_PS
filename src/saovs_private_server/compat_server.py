@@ -88,6 +88,7 @@ PASSWORD_HASH_ITERATIONS = int(os.environ.get("SAOVS_PASSWORD_HASH_ITERATIONS", 
 EMAIL_CODE_TTL_SECONDS = int(os.environ.get("SAOVS_EMAIL_CODE_TTL_SECONDS", "300"))
 EMAIL_CODE_ATTEMPT_LIMIT = int(os.environ.get("SAOVS_EMAIL_CODE_ATTEMPT_LIMIT", "10"))
 EMAIL_CODE_RESEND_SECONDS = int(os.environ.get("SAOVS_EMAIL_CODE_RESEND_SECONDS", "60"))
+PASSWORD_RESET_LIMIT_SECONDS = int(os.environ.get("SAOVS_PASSWORD_RESET_LIMIT_SECONDS", "86400"))
 REQUIRE_EMAIL_VERIFICATION = os.environ.get("SAOVS_REQUIRE_EMAIL_VERIFICATION", "1") != "0"
 SMTP_HOST = os.environ.get("SAOVS_SMTP_HOST", "")
 SMTP_PORT = int(os.environ.get("SAOVS_SMTP_PORT", "587"))
@@ -412,6 +413,17 @@ def init_db() -> None:
 
             CREATE INDEX IF NOT EXISTS idx_password_reset_codes_expires_at
                 ON password_reset_codes(expires_at);
+
+            CREATE TABLE IF NOT EXISTS password_reset_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                email TEXT NOT NULL,
+                login_user_id INTEGER NOT NULL REFERENCES login_users(id),
+                user_id INTEGER NOT NULL REFERENCES users(id),
+                reset_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_password_reset_events_user_id_reset_at
+                ON password_reset_events(user_id, reset_at);
 
             CREATE TABLE IF NOT EXISTS device_links (
                 platform_user_id TEXT PRIMARY KEY,
@@ -822,6 +834,28 @@ def create_password_reset_code(email: str) -> str:
     return code
 
 
+def password_reset_limit_error(conn: sqlite3.Connection, login_user: sqlite3.Row) -> str | None:
+    if PASSWORD_RESET_LIMIT_SECONDS <= 0:
+        return None
+    if int(login_user["user_id"]) == DEBUG_USER_ID:
+        return None
+
+    cutoff = utc_text(datetime.now(timezone.utc) - timedelta(seconds=PASSWORD_RESET_LIMIT_SECONDS))
+    row = conn.execute(
+        """
+        SELECT reset_at
+        FROM password_reset_events
+        WHERE user_id = ? AND reset_at > ?
+        ORDER BY reset_at DESC
+        LIMIT 1
+        """,
+        (int(login_user["user_id"]), cutoff),
+    ).fetchone()
+    if row is None:
+        return None
+    return "Password reset is limited to once every 24 hours."
+
+
 def request_password_reset_code(email: str) -> tuple[bool, str]:
     login_name = normalize_login_name(email)
     generic_message = "If that email is registered, a reset code was sent. It expires in 5 minutes."
@@ -830,14 +864,17 @@ def request_password_reset_code(email: str) -> tuple[bool, str]:
 
     resend_cutoff = utc_text(datetime.now(timezone.utc) - timedelta(seconds=EMAIL_CODE_RESEND_SECONDS))
     with db_connect() as conn:
-        existing = conn.execute("SELECT 1 FROM login_users WHERE username = ?", (login_name,)).fetchone()
+        existing = conn.execute("SELECT * FROM login_users WHERE username = ?", (login_name,)).fetchone()
         recent_code = conn.execute(
             "SELECT created_at FROM password_reset_codes WHERE email = ? AND created_at > ?",
             (login_name, resend_cutoff),
         ).fetchone()
+        limit_error = password_reset_limit_error(conn, existing) if existing is not None else None
 
     if existing is None:
         return True, generic_message
+    if limit_error:
+        return False, limit_error
     if recent_code is not None:
         return False, "Please wait before requesting another code."
 
@@ -891,6 +928,9 @@ def reset_login_password(username: str, code: str, new_password: str) -> tuple[d
         row = conn.execute("SELECT * FROM login_users WHERE username = ?", (login_name,)).fetchone()
         if row is None:
             return None, "Invalid email or reset code."
+        limit_error = password_reset_limit_error(conn, row)
+        if limit_error:
+            return None, limit_error
 
         now = utc_text()
         conn.execute(
@@ -902,6 +942,13 @@ def reset_login_password(username: str, code: str, new_password: str) -> tuple[d
             WHERE id = ?
             """,
             (hash_password(new_password), now, int(row["id"])),
+        )
+        conn.execute(
+            """
+            INSERT INTO password_reset_events (email, login_user_id, user_id, reset_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            (login_name, int(row["id"]), int(row["user_id"]), now),
         )
         conn.execute("DELETE FROM password_reset_codes WHERE email = ?", (login_name,))
         emit_log(f"[AUTH] reset password username={login_name} user_id={row['user_id']}")
@@ -926,7 +973,7 @@ def delete_player_account(user_id: int) -> tuple[dict[str, object] | None, str |
         login_names = [str(row["username"]) for row in login_rows]
         counts: dict[str, int] = {}
 
-        for table in ("sessions", "device_links", "account_payloads"):
+        for table in ("sessions", "device_links", "account_payloads", "password_reset_events"):
             cursor = conn.execute(f"DELETE FROM {table} WHERE user_id = ?", (int(user_id),))
             counts[table] = cursor.rowcount if cursor.rowcount >= 0 else 0
 
