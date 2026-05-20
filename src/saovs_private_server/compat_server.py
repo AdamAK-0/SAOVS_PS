@@ -151,6 +151,8 @@ SAOVS_ASSET_VER = os.environ.get("SAOVS_ASSET_VER", offline_login_value("assetve
 SAOVS_MASTER_DATA_VER = os.environ.get("SAOVS_MASTER_DATA_VER", offline_login_value("masterver", "202"))
 SAOVS_LOCALIZE_DATA_VER = int(os.environ.get("SAOVS_LOCALIZE_DATA_VER", offline_login_value("localizever", "161")))
 SAOVS_ADMIN_TOKEN = os.environ.get("SAOVS_ADMIN_TOKEN", "")
+SAOVS_ADMIN_USERNAME = os.environ.get("SAOVS_ADMIN_USERNAME", "admin")
+SAOVS_ADMIN_PASSWORD = os.environ.get("SAOVS_ADMIN_PASSWORD", "admin")
 SAOVS_ASSET_HOSTS = {
     host.strip().lower()
     for host in os.environ.get(
@@ -293,6 +295,25 @@ def ensure_default_account(conn: sqlite3.Connection) -> None:
         return
 
     row = conn.execute("SELECT * FROM login_users WHERE username = ?", (login_name,)).fetchone()
+    legacy_login_name = normalize_login_name("adam")
+    if row is None and login_name != legacy_login_name:
+        legacy_row = conn.execute(
+            "SELECT * FROM login_users WHERE username = ? AND user_id = ?",
+            (legacy_login_name, DEBUG_USER_ID),
+        ).fetchone()
+        if legacy_row is not None:
+            conn.execute(
+                """
+                UPDATE login_users
+                SET username = ?,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (login_name, now, int(legacy_row["id"])),
+            )
+            emit_log(f"[AUTH] migrated default login username from {legacy_login_name} to {login_name}")
+            row = conn.execute("SELECT * FROM login_users WHERE username = ?", (login_name,)).fetchone()
+
     if row is None:
         conn.execute(
             """
@@ -380,6 +401,17 @@ def init_db() -> None:
 
             CREATE INDEX IF NOT EXISTS idx_email_verification_codes_expires_at
                 ON email_verification_codes(expires_at);
+
+            CREATE TABLE IF NOT EXISTS password_reset_codes (
+                email TEXT PRIMARY KEY,
+                code_hash TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                attempts INTEGER NOT NULL DEFAULT 0
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_password_reset_codes_expires_at
+                ON password_reset_codes(expires_at);
 
             CREATE TABLE IF NOT EXISTS device_links (
                 platform_user_id TEXT PRIMARY KEY,
@@ -647,35 +679,6 @@ def authenticate_login_user(username: str, password: str) -> dict[str, object] |
         return dict(row)
 
 
-def change_login_password(username: str, current_password: str, new_password: str) -> tuple[dict[str, object] | None, str | None]:
-    login_name = normalize_login_name(username)
-    if len(new_password) < 4:
-        return None, "New password must be at least 4 characters."
-    if new_password == BOOTSTRAP_LOGIN_PASSWORD:
-        return None, "Choose a different password."
-
-    with db_connect() as conn:
-        row = conn.execute("SELECT * FROM login_users WHERE username = ?", (login_name,)).fetchone()
-        if row is None or not verify_password(current_password, str(row["password_hash"])):
-            return None, "Invalid username or current password."
-
-        now = utc_text()
-        conn.execute(
-            """
-            UPDATE login_users
-            SET password_hash = ?,
-                password_change_required = 0,
-                last_login_at = ?,
-                updated_at = ?
-            WHERE id = ?
-            """,
-            (hash_password(new_password), now, now, int(row["id"])),
-        )
-        emit_log(f"[AUTH] changed password username={login_name} user_id={row['user_id']}")
-        row = conn.execute("SELECT * FROM login_users WHERE id = ?", (int(row["id"]),)).fetchone()
-        return dict(row), None
-
-
 def generate_email_code() -> str:
     return f"{secrets.randbelow(1_000_000):06d}"
 
@@ -702,17 +705,17 @@ def create_email_verification_code(email: str) -> str:
     return code
 
 
-def send_verification_email(email: str, code: str) -> bool:
+def send_email_code(email: str, code: str, subject: str, purpose: str) -> bool:
     if not SMTP_HOST:
-        emit_log(f"[EMAIL DEV] registration code for {email}: {code}")
+        emit_log(f"[EMAIL DEV] {purpose} code for {email}: {code}")
         return False
 
     message = EmailMessage()
-    message["Subject"] = "SAOVS registration code"
+    message["Subject"] = subject
     message["From"] = SMTP_FROM
     message["To"] = email
     message.set_content(
-        f"Your SAOVS registration code is {code}.\n\n"
+        f"Your SAOVS {purpose} code is {code}.\n\n"
         f"It expires in {max(1, EMAIL_CODE_TTL_SECONDS // 60)} minutes."
     )
 
@@ -723,12 +726,20 @@ def send_verification_email(email: str, code: str) -> bool:
             if SMTP_USERNAME or SMTP_PASSWORD:
                 smtp.login(SMTP_USERNAME, SMTP_PASSWORD)
             smtp.send_message(message)
-        emit_log(f"[EMAIL] sent registration code to {email}")
+        emit_log(f"[EMAIL] sent {purpose} code to {email}")
         return True
     except Exception as exc:
-        emit_log(f"[EMAIL] failed to send registration code to {email}: {exc}")
-        emit_log(f"[EMAIL DEV] registration code for {email}: {code}")
+        emit_log(f"[EMAIL] failed to send {purpose} code to {email}: {exc}")
+        emit_log(f"[EMAIL DEV] {purpose} code for {email}: {code}")
         return False
+
+
+def send_verification_email(email: str, code: str) -> bool:
+    return send_email_code(email, code, "SAOVS registration code", "registration")
+
+
+def send_password_reset_email(email: str, code: str) -> bool:
+    return send_email_code(email, code, "SAOVS password reset code", "password reset")
 
 
 def request_registration_code(email: str) -> tuple[bool, str]:
@@ -787,6 +798,169 @@ def verify_registration_code(email: str, code: str) -> tuple[bool, str | None]:
 
         conn.execute("DELETE FROM email_verification_codes WHERE email = ?", (login_name,))
         return True, None
+
+
+def create_password_reset_code(email: str) -> str:
+    login_name = normalize_login_name(email)
+    code = generate_email_code()
+    now = datetime.now(timezone.utc)
+    expires_at = now + timedelta(seconds=EMAIL_CODE_TTL_SECONDS)
+    with db_connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO password_reset_codes
+                (email, code_hash, created_at, expires_at, attempts)
+            VALUES (?, ?, ?, ?, 0)
+            ON CONFLICT(email) DO UPDATE SET
+                code_hash = excluded.code_hash,
+                created_at = excluded.created_at,
+                expires_at = excluded.expires_at,
+                attempts = 0
+            """,
+            (login_name, hash_password(code), utc_text(now), utc_text(expires_at)),
+        )
+    return code
+
+
+def request_password_reset_code(email: str) -> tuple[bool, str]:
+    login_name = normalize_login_name(email)
+    generic_message = "If that email is registered, a reset code was sent. It expires in 5 minutes."
+    if not is_valid_email(login_name):
+        return True, generic_message
+
+    resend_cutoff = utc_text(datetime.now(timezone.utc) - timedelta(seconds=EMAIL_CODE_RESEND_SECONDS))
+    with db_connect() as conn:
+        existing = conn.execute("SELECT 1 FROM login_users WHERE username = ?", (login_name,)).fetchone()
+        recent_code = conn.execute(
+            "SELECT created_at FROM password_reset_codes WHERE email = ? AND created_at > ?",
+            (login_name, resend_cutoff),
+        ).fetchone()
+
+    if existing is None:
+        return True, generic_message
+    if recent_code is not None:
+        return False, "Please wait before requesting another code."
+
+    code = create_password_reset_code(login_name)
+    send_password_reset_email(login_name, code)
+    return True, generic_message
+
+
+def verify_password_reset_code(email: str, code: str) -> tuple[bool, str | None]:
+    login_name = normalize_login_name(email)
+    submitted_code = code.strip()
+    if not search(r"^\d{6}$", submitted_code):
+        return False, "Enter the 6-digit reset code."
+
+    now = utc_text()
+    with db_connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM password_reset_codes WHERE email = ?",
+            (login_name,),
+        ).fetchone()
+        if row is None:
+            return False, "Request a reset code first."
+        if str(row["expires_at"]) < now:
+            conn.execute("DELETE FROM password_reset_codes WHERE email = ?", (login_name,))
+            return False, "Reset code expired. Request a new one."
+        if int(row["attempts"]) >= EMAIL_CODE_ATTEMPT_LIMIT:
+            conn.execute("DELETE FROM password_reset_codes WHERE email = ?", (login_name,))
+            return False, "Too many code attempts. Request a new one."
+        if not verify_password(submitted_code, str(row["code_hash"])):
+            conn.execute(
+                "UPDATE password_reset_codes SET attempts = attempts + 1 WHERE email = ?",
+                (login_name,),
+            )
+            return False, "Invalid reset code."
+
+        return True, None
+
+
+def reset_login_password(username: str, code: str, new_password: str) -> tuple[dict[str, object] | None, str | None]:
+    login_name = normalize_login_name(username)
+    if len(new_password) < 4:
+        return None, "New password must be at least 4 characters."
+    if new_password == BOOTSTRAP_LOGIN_PASSWORD:
+        return None, "Choose a different password."
+
+    ok, error = verify_password_reset_code(login_name, code)
+    if not ok:
+        return None, error or "Could not verify reset code."
+
+    with db_connect() as conn:
+        row = conn.execute("SELECT * FROM login_users WHERE username = ?", (login_name,)).fetchone()
+        if row is None:
+            return None, "Invalid email or reset code."
+
+        now = utc_text()
+        conn.execute(
+            """
+            UPDATE login_users
+            SET password_hash = ?,
+                password_change_required = 0,
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (hash_password(new_password), now, int(row["id"])),
+        )
+        conn.execute("DELETE FROM password_reset_codes WHERE email = ?", (login_name,))
+        emit_log(f"[AUTH] reset password username={login_name} user_id={row['user_id']}")
+        row = conn.execute("SELECT * FROM login_users WHERE id = ?", (int(row["id"]),)).fetchone()
+        return dict(row), None
+
+
+def delete_player_account(user_id: int) -> tuple[dict[str, object] | None, str | None]:
+    if int(user_id) == DEBUG_USER_ID:
+        return None, "The bootstrap Adam account cannot be deleted from the dashboard."
+
+    with db_connect() as conn:
+        user = conn.execute("SELECT * FROM users WHERE id = ?", (int(user_id),)).fetchone()
+        if user is None:
+            return None, "Player not found."
+
+        login_rows = conn.execute(
+            "SELECT id, username FROM login_users WHERE user_id = ?",
+            (int(user_id),),
+        ).fetchall()
+        login_ids = [int(row["id"]) for row in login_rows]
+        login_names = [str(row["username"]) for row in login_rows]
+        counts: dict[str, int] = {}
+
+        for table in ("sessions", "device_links", "account_payloads"):
+            cursor = conn.execute(f"DELETE FROM {table} WHERE user_id = ?", (int(user_id),))
+            counts[table] = cursor.rowcount if cursor.rowcount >= 0 else 0
+
+        auth_count = 0
+        for login_id in login_ids:
+            cursor = conn.execute("DELETE FROM auth_codes WHERE login_user_id = ?", (login_id,))
+            auth_count += cursor.rowcount if cursor.rowcount >= 0 else 0
+        counts["auth_codes"] = auth_count
+
+        email_code_count = 0
+        reset_code_count = 0
+        for login_name in login_names:
+            cursor = conn.execute("DELETE FROM email_verification_codes WHERE email = ?", (login_name,))
+            email_code_count += cursor.rowcount if cursor.rowcount >= 0 else 0
+            cursor = conn.execute("DELETE FROM password_reset_codes WHERE email = ?", (login_name,))
+            reset_code_count += cursor.rowcount if cursor.rowcount >= 0 else 0
+        counts["email_verification_codes"] = email_code_count
+        counts["password_reset_codes"] = reset_code_count
+
+        cursor = conn.execute("DELETE FROM login_users WHERE user_id = ?", (int(user_id),))
+        counts["login_users"] = cursor.rowcount if cursor.rowcount >= 0 else 0
+        cursor = conn.execute("DELETE FROM users WHERE id = ?", (int(user_id),))
+        counts["users"] = cursor.rowcount if cursor.rowcount >= 0 else 0
+
+        emit_log(
+            f"[ADMIN] deleted player user_id={int(user_id)} "
+            f"user_name={str(user['user_name'])} login_count={len(login_names)}"
+        )
+        return {
+            "userId": int(user_id),
+            "userName": str(user["user_name"]),
+            "loginNames": login_names,
+            "deleted": counts,
+        }, None
 
 
 def issue_auth_code(login_user: dict[str, object]) -> str:
@@ -874,13 +1048,26 @@ def session_for_response() -> str:
     return ""
 
 
-def require_admin() -> None:
-    if not SAOVS_ADMIN_TOKEN:
-        return
-
+def is_admin_authorized() -> bool:
     token = request.headers.get("X-Admin-Token") or request.args.get("token") or ""
-    if not secrets.compare_digest(token, SAOVS_ADMIN_TOKEN):
-        abort(401)
+    if SAOVS_ADMIN_TOKEN and secrets.compare_digest(token, SAOVS_ADMIN_TOKEN):
+        return True
+
+    auth = request.authorization
+    if auth and secrets.compare_digest(auth.username or "", SAOVS_ADMIN_USERNAME):
+        return secrets.compare_digest(auth.password or "", SAOVS_ADMIN_PASSWORD)
+    return False
+
+
+def admin_auth_required_response() -> Response:
+    response = Response("Admin authentication required.", status=401)
+    response.headers["WWW-Authenticate"] = 'Basic realm="SAOVS Admin", charset="UTF-8"'
+    return response
+
+
+def require_admin() -> None:
+    if not is_admin_authorized():
+        abort(admin_auth_required_response())
 
 
 def clamp_int(value: object, default: int, minimum: int, maximum: int) -> int:
@@ -933,6 +1120,7 @@ def log_entry_category(path: str, raw: str) -> str:
         or "login.html" in lower_path
         or "register.html" in lower_path
         or "change-password.html" in lower_path
+        or "reset-password.html" in lower_path
     ):
         return "auth"
     if lower_path.startswith("/api/") or "/api/" in lower_path:
@@ -1242,6 +1430,7 @@ def is_sensitive_form_request() -> bool:
         "/login.html",
         "/register.html",
         "/change-password.html",
+        "/reset-password.html",
         "/bnid/login",
         "/bnid/login.html",
     }:
@@ -1655,6 +1844,8 @@ def log_response(response: Response) -> Response:
 @app.errorhandler(Exception)
 def log_exception(error: Exception) -> Response | tuple[Response, int]:
     if isinstance(error, HTTPException):
+        if request.path.startswith("/admin") and error.response is not None:
+            return error.response
         if request.path.startswith("/admin"):
             return jsonify({"statusCode": 10001, "error": error.description}), error.code or 500
         emit_log(f"[HTTP ERROR] {request.method} {request.path} -> {error.code} {error.description}")
@@ -1857,7 +2048,7 @@ def render_account_shell(
     .links {{
       display: grid;
       gap: 10px;
-      grid-template-columns: 1fr 1fr;
+      grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
       margin-top: 16px;
     }}
     .links.single {{
@@ -1914,7 +2105,7 @@ def render_login_page(
     safe_redirect = escape(redirect_uri or "", quote=True)
     safe_username = escape(username, quote=True)
     register_href = escape(account_page_url("/register.html", redirect_uri), quote=True)
-    change_href = escape(account_page_url("/change-password.html", redirect_uri), quote=True)
+    reset_href = escape(account_page_url("/reset-password.html", redirect_uri), quote=True)
     body = f"""
     <form method="post" action="{safe_action}">
       <input type="hidden" name="mode" value="login">
@@ -1927,7 +2118,7 @@ def render_login_page(
     </form>
     <div class="links">
       <a class="link-button secondary" href="{register_href}">Create Account</a>
-      <a class="link-button secondary" href="{change_href}">Change Password</a>
+      <a class="link-button secondary" href="{reset_href}">Reset Password</a>
     </div>
 """
     return render_account_shell("SAOVS Login", "Use your private-server account to continue.", body, error=error)
@@ -1982,35 +2173,37 @@ def render_register_page(
     )
 
 
-def render_change_password_page(
+def render_reset_password_page(
     redirect_uri: str | None = None,
     error: str = "",
     message: str = "",
-    username: str = "",
+    email: str = "",
 ) -> Response:
-    safe_action = escape(account_page_url("/change-password.html", redirect_uri), quote=True)
+    safe_action = escape(account_page_url("/reset-password.html", redirect_uri), quote=True)
     safe_redirect = escape(redirect_uri or "", quote=True)
-    safe_username = escape(username, quote=True)
+    safe_email = escape(email, quote=True)
     login_href = escape(account_page_url("/login.html", redirect_uri), quote=True)
     body = f"""
     <form method="post" action="{safe_action}">
-      <input type="hidden" name="mode" value="change_password">
       <input type="hidden" name="redirect_uri" value="{safe_redirect}">
-      <label for="change-email">Email</label>
-      <input id="change-email" name="email" value="{safe_username}" autocomplete="username" required>
-      <label for="current-password">Current Password</label>
-      <input id="current-password" name="password" type="password" autocomplete="current-password" required>
-      <label for="new-password">New Password</label>
-      <input id="new-password" name="new_password" type="password" autocomplete="new-password" required>
-      <button type="submit">Change Password</button>
+      <label for="reset-email">Email</label>
+      <input id="reset-email" name="email" value="{safe_email}" type="email" autocomplete="email" required>
+      <label for="reset-code">6-Digit Code</label>
+      <input id="reset-code" name="reset_code" inputmode="numeric" pattern="[0-9]{{6}}" maxlength="6">
+      <label for="reset-password">New Password</label>
+      <input id="reset-password" name="new_password" type="password" autocomplete="new-password">
+      <div class="button-row">
+        <button class="secondary" type="submit" name="mode" value="send_reset_code">Send Code</button>
+        <button type="submit" name="mode" value="reset_password">Reset Password</button>
+      </div>
     </form>
     <div class="links single">
       <a class="link-button secondary" href="{login_href}">Back To Login</a>
     </div>
 """
     return render_account_shell(
-        "Change Password",
-        "Confirm the old password before setting a new one.",
+        "Reset Password",
+        "Use an email code to set a new password.",
         body,
         error=error,
         message=message,
@@ -2025,7 +2218,7 @@ def render_bnid_login_page(
     require_password_change: bool = False,
 ) -> Response:
     if require_password_change:
-        return render_change_password_page(redirect_uri, error, username=username)
+        return render_reset_password_page(redirect_uri, error, email=username)
     return render_login_page(redirect_uri, error, username)
 
 
@@ -2033,8 +2226,8 @@ def handle_bnid_login_post() -> Response:
     mode = request.form.get("mode", "login")
     if mode in {"register", "send_code"}:
         return handle_register_post()
-    if mode == "change_password":
-        return handle_change_password_post()
+    if mode in {"send_reset_code", "reset_password"}:
+        return handle_reset_password_post()
 
     redirect_uri = request.form.get("redirect_uri") or request.args.get("redirect_uri")
     username = request.form.get("email") or request.form.get("username", "")
@@ -2044,10 +2237,10 @@ def handle_bnid_login_post() -> Response:
     if login_user is None:
         return render_login_page(redirect_uri, "Invalid email or password.", username)
     if bool_from_db(login_user.get("password_change_required")):
-        return render_change_password_page(
+        return render_reset_password_page(
             redirect_uri,
-            "Change this bootstrap password before continuing.",
-            username=username,
+            "Reset this password by email before continuing.",
+            email=username,
         )
 
     auth_code = issue_auth_code(login_user)
@@ -2095,19 +2288,27 @@ def handle_register_post() -> Response:
     return redirect(target, code=302)
 
 
-def handle_change_password_post() -> Response:
+def handle_reset_password_post() -> Response:
     redirect_uri = request.form.get("redirect_uri") or request.args.get("redirect_uri")
-    username = request.form.get("email") or request.form.get("username", "")
-    password = request.form.get("password", "")
-    new_password = request.form.get("new_password", "")
+    email = request.form.get("email") or request.form.get("username", "")
+    login_email = normalize_login_name(email)
+    mode = request.form.get("mode", "reset_password")
 
-    login_user, error = change_login_password(username, password, new_password)
+    if mode == "send_reset_code":
+        ok, message = request_password_reset_code(login_email)
+        if ok:
+            return render_reset_password_page(redirect_uri, message=message, email=login_email)
+        return render_reset_password_page(redirect_uri, error=message, email=login_email)
+
+    new_password = request.form.get("new_password", "")
+    reset_code = request.form.get("reset_code", "")
+    login_user, error = reset_login_password(login_email, reset_code, new_password)
     if error or login_user is None:
-        return render_change_password_page(redirect_uri, error or "Could not change password.", username=username)
+        return render_reset_password_page(redirect_uri, error=error or "Could not reset password.", email=login_email)
 
     auth_code = issue_auth_code(login_user)
     target = local_auth_result_url(auth_code, redirect_uri)
-    emit_log(f"[AUTH] returning auth_result after password change for login={normalize_login_name(username)} user_id={login_user['user_id']}")
+    emit_log(f"[AUTH] returning auth_result after password reset for login={login_email} user_id={login_user['user_id']}")
     return redirect(target, code=302)
 
 
@@ -2210,12 +2411,19 @@ def register_html() -> Response:
 
 
 @app.route("/change-password.html", methods=["GET", "POST"])
-def change_password_html() -> Response:
+def legacy_change_password_html() -> Response:
+    log_request()
+    redirect_uri = request.form.get("redirect_uri") or request.args.get("redirect_uri")
+    return redirect(account_page_url("/reset-password.html", redirect_uri), code=302)
+
+
+@app.route("/reset-password.html", methods=["GET", "POST"])
+def reset_password_html() -> Response:
     log_request()
     redirect_uri = request.args.get("redirect_uri")
     if request.method == "POST":
-        return handle_change_password_post()
-    return render_change_password_page(redirect_uri)
+        return handle_reset_password_post()
+    return render_reset_password_page(redirect_uri)
 
 
 @app.route("/bnid/login", methods=["GET", "POST"])
@@ -2550,11 +2758,13 @@ def transfer_set_bnid() -> Response:
 @app.route("/admin", methods=["GET"])
 @app.route("/admin/", methods=["GET"])
 def admin_dashboard() -> Response:
+    require_admin()
     return send_file(ADMIN_STATIC_DIR / "dashboard.html", mimetype="text/html")
 
 
 @app.route("/admin/assets/<path:filename>", methods=["GET"])
 def admin_dashboard_asset(filename: str) -> Response:
+    require_admin()
     asset_path = (ADMIN_STATIC_DIR / filename).resolve()
     if filename.startswith("media/") and not asset_path.is_file():
         return Response(status=204)
@@ -2666,8 +2876,18 @@ def admin_users() -> Response:
     for row in rows:
         item = dict(row)
         item["session_count"] = item["active_session_count"]
+        item["can_delete"] = int(item["id"]) != DEBUG_USER_ID
         users.append(item)
     return jsonify({"users": users, "activeSessionSeconds": SESSION_ACTIVE_SECONDS})
+
+
+@app.route("/admin/users/<int:user_id>/delete", methods=["POST"])
+def admin_delete_user(user_id: int) -> Response:
+    require_admin()
+    result, error = delete_player_account(user_id)
+    if error or result is None:
+        return jsonify({"ok": False, "error": error or "Could not delete player."}), 400
+    return jsonify({"ok": True, "result": result})
 
 
 @app.route("/<path:path>", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])

@@ -15,6 +15,8 @@ Run the Python app on an internal port:
 ```powershell
 $env:SAOVS_ASSET_BASE = "https://assets.example.com/"
 $env:SAOVS_ASSET_HOSTS = "assets.example.com"
+$env:SAOVS_ADMIN_USERNAME = "<admin-user>"
+$env:SAOVS_ADMIN_PASSWORD = "<long-random-password>"
 $env:SAOVS_ADMIN_TOKEN = "<long-random-secret>"
 python -m saovs_private_server.compat_server --host 127.0.0.1 --port 8000
 ```

@@ -85,7 +85,7 @@
     if (adminToken()) {
       headers["X-Admin-Token"] = adminToken();
     }
-    const response = await fetch(path, { headers });
+    const response = await fetch(path, { headers, credentials: "same-origin" });
     if (response.status === 401) {
       throw new Error("Admin token required");
     }
@@ -103,6 +103,7 @@
     const response = await fetch(path, {
       method: "POST",
       headers,
+      credentials: "same-origin",
       body: JSON.stringify(payload || {}),
     });
     if (response.status === 401) {
@@ -303,19 +304,23 @@
     const rows = users.map(function (user) {
       const activeSessions = Number(user.active_session_count || user.session_count || 0);
       const totalSessions = Number(user.total_session_count || 0);
+      const action = user.can_delete
+        ? '<button class="btn danger compact" type="button" data-delete-user-id="' + escapeHtml(user.id) + '" data-delete-user-name="' + escapeHtml(user.user_name) + '">Delete</button>'
+        : '<span class="muted">Protected</span>';
       return [
         '<div class="player-row">',
         '  <span>' + escapeHtml(user.id) + "</span>",
         '  <strong class="truncate">' + escapeHtml(user.user_name) + "</strong>",
         '  <span class="truncate">' + escapeHtml(user.login_names || user.user_code) + "</span>",
         '  <span>' + escapeHtml(activeSessions) + " active / " + escapeHtml(totalSessions) + " total</span>",
+        "  " + action,
         "</div>",
       ].join("");
     }).join("");
 
     els.playersTable.innerHTML = [
       '<div class="player-row header">',
-      "  <span>ID</span><span>Name</span><span>Login/User Code</span><span>Sessions</span>",
+      "  <span>ID</span><span>Name</span><span>Login/User Code</span><span>Sessions</span><span>Action</span>",
       "</div>",
       rows,
     ].join("");
@@ -389,6 +394,26 @@
     if (!row) return;
     const entry = state.entries.find(function (item) { return item.id === row.dataset.logId; });
     renderDetail(entry);
+  });
+
+  els.playersTable.addEventListener("click", async function (event) {
+    const button = event.target.closest("[data-delete-user-id]");
+    if (!button) return;
+
+    const userId = button.dataset.deleteUserId;
+    const userName = button.dataset.deleteUserName || "this player";
+    if (!window.confirm("Delete " + userName + " and all linked account data?")) return;
+
+    button.disabled = true;
+    try {
+      await apiPost("/admin/users/" + encodeURIComponent(userId) + "/delete", {});
+      showToast("Player deleted.");
+      await refreshAll(false);
+    } catch (error) {
+      showToast(error.message);
+    } finally {
+      button.disabled = false;
+    }
   });
 
   els.closeDetailBtn.addEventListener("click", function () {
