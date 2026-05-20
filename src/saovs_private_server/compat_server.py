@@ -3,16 +3,20 @@ from __future__ import annotations
 import argparse
 import base64
 import hashlib
+import hmac
 import json
 import logging
 import os
 import secrets
+import smtplib
 import sqlite3
-from datetime import datetime, timezone
+import uuid as uuidlib
+from datetime import datetime, timedelta, timezone
+from email.message import EmailMessage
 from html import escape
 from pathlib import Path
 from re import search, sub
-from urllib.parse import quote, unquote, urlparse
+from urllib.parse import parse_qs, quote, unquote, urlparse
 
 from flask import Flask, Response, abort, g, jsonify, redirect, request, send_file
 from werkzeug.exceptions import HTTPException
@@ -23,6 +27,46 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 app = Flask(__name__)
 
+
+def load_env_file(path: Path) -> None:
+    if not path.is_file():
+        return
+
+    for raw_line in path.read_text(encoding="utf-8-sig").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[7:].strip()
+        if "=" not in line:
+            continue
+
+        key, value = line.split("=", 1)
+        key = key.strip().lstrip("\ufeff")
+        value = value.strip()
+        if not key or key in os.environ:
+            continue
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+            value = value[1:-1]
+        os.environ[key] = value
+
+
+def load_local_env() -> None:
+    candidates = [
+        Path.cwd() / ".env",
+        Path(__file__).resolve().parents[2] / ".env",
+    ]
+    loaded: set[Path] = set()
+    for candidate in candidates:
+        resolved = candidate.resolve()
+        if resolved in loaded:
+            continue
+        loaded.add(resolved)
+        load_env_file(resolved)
+
+
+load_local_env()
+
 SERVER_ROOT = Path(os.environ.get("SAOVS_SERVER_ROOT", Path(__file__).resolve().parents[2])).resolve()
 LOG_DIR = Path(os.environ.get("SAOVS_LOG_DIR", SERVER_ROOT / "runtime" / "logs")).resolve()
 DB_FILE = Path(os.environ.get("SAOVS_DB", SERVER_ROOT / "runtime" / "saovs.sqlite3")).resolve()
@@ -32,11 +76,28 @@ DEBUG_USER_ID = int(os.environ.get("SAOVS_DEFAULT_USER_ID", "183705490"))
 DEBUG_USER_CODE = int(os.environ.get("SAOVS_DEFAULT_USER_CODE", "46841725594"))
 DEBUG_TUTORIAL_STEP = os.environ.get("SAOVS_DEFAULT_TUTORIAL_STEP", "999")
 DEFAULT_USER_NAME = os.environ.get("SAOVS_DEFAULT_USER_NAME", "Kirito")
+BOOTSTRAP_LOGIN_PASSWORD = "adam"
 LOG_FILE = LOG_DIR / "saovs_private_server.log"
 REQUEST_DUMP_DIR = LOG_DIR / "request_bodies"
 ADMIN_STATIC_DIR = Path(__file__).with_name("admin_static")
 ADMIN_LOG_READ_BYTES = int(os.environ.get("SAOVS_ADMIN_LOG_READ_BYTES", str(2 * 1024 * 1024)))
 ADMIN_LOG_LIMIT = int(os.environ.get("SAOVS_ADMIN_LOG_LIMIT", "250"))
+AUTH_CODE_TTL_SECONDS = int(os.environ.get("SAOVS_AUTH_CODE_TTL_SECONDS", "600"))
+SESSION_ACTIVE_SECONDS = int(os.environ.get("SAOVS_SESSION_ACTIVE_SECONDS", "1800"))
+PASSWORD_HASH_ITERATIONS = int(os.environ.get("SAOVS_PASSWORD_HASH_ITERATIONS", "180000"))
+EMAIL_CODE_TTL_SECONDS = int(os.environ.get("SAOVS_EMAIL_CODE_TTL_SECONDS", "300"))
+EMAIL_CODE_ATTEMPT_LIMIT = int(os.environ.get("SAOVS_EMAIL_CODE_ATTEMPT_LIMIT", "10"))
+EMAIL_CODE_RESEND_SECONDS = int(os.environ.get("SAOVS_EMAIL_CODE_RESEND_SECONDS", "60"))
+REQUIRE_EMAIL_VERIFICATION = os.environ.get("SAOVS_REQUIRE_EMAIL_VERIFICATION", "1") != "0"
+SMTP_HOST = os.environ.get("SAOVS_SMTP_HOST", "")
+SMTP_PORT = int(os.environ.get("SAOVS_SMTP_PORT", "587"))
+SMTP_USERNAME = os.environ.get("SAOVS_SMTP_USERNAME", "")
+SMTP_PASSWORD = os.environ.get("SAOVS_SMTP_PASSWORD", "")
+SMTP_FROM = os.environ.get("SAOVS_SMTP_FROM", SMTP_USERNAME or "noreply@saovs.com")
+SMTP_USE_TLS = os.environ.get("SAOVS_SMTP_USE_TLS", "1") != "0"
+DEFAULT_LOGIN_USERNAME = os.environ.get("SAOVS_DEFAULT_LOGIN_USERNAME", "adam")
+DEFAULT_LOGIN_PASSWORD = os.environ.get("SAOVS_DEFAULT_LOGIN_PASSWORD", BOOTSTRAP_LOGIN_PASSWORD)
+ACCOUNT_PAYLOAD_CACHE_VERSION = "account-json-v1"
 
 
 def resolve_content_root() -> Path:
@@ -153,6 +214,113 @@ def db_connect() -> sqlite3.Connection:
     return conn
 
 
+def hash_password(password: str) -> str:
+    salt = secrets.token_bytes(16)
+    derived = hashlib.pbkdf2_hmac(
+        "sha256",
+        password.encode("utf-8"),
+        salt,
+        PASSWORD_HASH_ITERATIONS,
+    )
+    return "pbkdf2_sha256${}${}${}".format(
+        PASSWORD_HASH_ITERATIONS,
+        base64.b64encode(salt).decode("ascii"),
+        base64.b64encode(derived).decode("ascii"),
+    )
+
+
+def verify_password(password: str, stored_hash: str) -> bool:
+    try:
+        algorithm, iteration_text, salt_text, hash_text = stored_hash.split("$", 3)
+        if algorithm != "pbkdf2_sha256":
+            return False
+        iterations = int(iteration_text)
+        salt = base64.b64decode(salt_text)
+        expected = base64.b64decode(hash_text)
+    except Exception:
+        return False
+
+    actual = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations)
+    return hmac.compare_digest(actual, expected)
+
+
+def normalize_login_name(value: str) -> str:
+    return value.strip().lower()
+
+
+def is_valid_email(value: str) -> bool:
+    return bool(search(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", value.strip()))
+
+
+def bool_from_db(value: object) -> bool:
+    return bool(int(value or 0))
+
+
+def generate_account_uuid() -> str:
+    return str(uuidlib.uuid4())
+
+
+def generate_user_code(conn: sqlite3.Connection) -> int:
+    for _ in range(64):
+        user_code = 40_000_000_000 + secrets.randbelow(60_000_000_000)
+        row = conn.execute("SELECT 1 FROM users WHERE user_code = ?", (user_code,)).fetchone()
+        if row is None:
+            return user_code
+    raise RuntimeError("Could not allocate a unique user code.")
+
+
+def ensure_default_account(conn: sqlite3.Connection) -> None:
+    now = utc_text()
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO users
+            (id, user_code, uuid, user_name, tutorial_step, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            DEBUG_USER_ID,
+            DEBUG_USER_CODE,
+            "00000000-0000-4000-8000-000000000001",
+            DEFAULT_USER_NAME,
+            DEBUG_TUTORIAL_STEP,
+            now,
+            now,
+        ),
+    )
+
+    login_name = normalize_login_name(DEFAULT_LOGIN_USERNAME)
+    if not login_name or not DEFAULT_LOGIN_PASSWORD:
+        return
+
+    row = conn.execute("SELECT * FROM login_users WHERE username = ?", (login_name,)).fetchone()
+    if row is None:
+        conn.execute(
+            """
+            INSERT INTO login_users
+                (username, password_hash, user_id, display_name, password_change_required, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                login_name,
+                hash_password(DEFAULT_LOGIN_PASSWORD),
+                DEBUG_USER_ID,
+                DEFAULT_USER_NAME,
+                1 if DEFAULT_LOGIN_PASSWORD == BOOTSTRAP_LOGIN_PASSWORD else 0,
+                now,
+                now,
+            ),
+        )
+    elif (
+        DEFAULT_LOGIN_PASSWORD == BOOTSTRAP_LOGIN_PASSWORD
+        and not bool_from_db(row["password_change_required"])
+        and verify_password(BOOTSTRAP_LOGIN_PASSWORD, str(row["password_hash"]))
+    ):
+        conn.execute(
+            "UPDATE login_users SET password_change_required = 1, updated_at = ? WHERE id = ?",
+            (now, int(row["id"])),
+        )
+
+
 def init_db() -> None:
     with db_connect() as conn:
         conn.executescript(
@@ -175,12 +343,82 @@ def init_db() -> None:
             );
 
             CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
+
+            CREATE TABLE IF NOT EXISTS login_users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT UNIQUE NOT NULL,
+                password_hash TEXT NOT NULL,
+                user_id INTEGER NOT NULL REFERENCES users(id),
+                display_name TEXT NOT NULL,
+                password_change_required INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                last_login_at TEXT
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_login_users_user_id ON login_users(user_id);
+
+            CREATE TABLE IF NOT EXISTS auth_codes (
+                code TEXT PRIMARY KEY,
+                login_user_id INTEGER NOT NULL REFERENCES login_users(id),
+                user_id INTEGER NOT NULL REFERENCES users(id),
+                created_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                redeemed_at TEXT,
+                redeemed_platform_user_id TEXT
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_auth_codes_user_id ON auth_codes(user_id);
+
+            CREATE TABLE IF NOT EXISTS email_verification_codes (
+                email TEXT PRIMARY KEY,
+                code_hash TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                attempts INTEGER NOT NULL DEFAULT 0
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_email_verification_codes_expires_at
+                ON email_verification_codes(expires_at);
+
+            CREATE TABLE IF NOT EXISTS device_links (
+                platform_user_id TEXT PRIMARY KEY,
+                user_id INTEGER NOT NULL REFERENCES users(id),
+                uuid TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_device_links_user_id ON device_links(user_id);
+
+            CREATE TABLE IF NOT EXISTS account_payloads (
+                user_id INTEGER NOT NULL REFERENCES users(id),
+                route_key TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (user_id, route_key)
+            );
             """
+        )
+        ensure_schema_migrations(conn)
+        ensure_default_account(conn)
+
+
+def ensure_schema_migrations(conn: sqlite3.Connection) -> None:
+    login_columns = {
+        str(row["name"])
+        for row in conn.execute("PRAGMA table_info(login_users)").fetchall()
+    }
+    if "password_change_required" not in login_columns:
+        conn.execute(
+            "ALTER TABLE login_users ADD COLUMN password_change_required INTEGER NOT NULL DEFAULT 0"
         )
 
 
-def utc_text() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+def utc_text(value: datetime | None = None) -> str:
+    value = value or datetime.now(timezone.utc)
+    return value.strftime("%Y-%m-%d %H:%M:%S")
 
 
 def row_to_dict(row: sqlite3.Row | None) -> dict[str, object] | None:
@@ -198,9 +436,48 @@ def current_request_uuid(default: str = "00000000-0000-4000-8000-000000000001") 
     return default
 
 
+def current_saovs_payload() -> dict[str, object] | None:
+    frame = current_saovs_request_frame()
+    if not frame or not isinstance(frame.get("value"), list) or len(frame["value"]) < 2:
+        return None
+
+    payload = frame["value"][1]
+    return payload if isinstance(payload, dict) else None
+
+
+def current_platform_user_id() -> str:
+    payload = current_saovs_payload()
+    if payload and isinstance(payload.get("platformUserId"), str):
+        return payload["platformUserId"].strip()
+    return ""
+
+
 def get_user_by_uuid(uuid: str) -> dict[str, object] | None:
     with db_connect() as conn:
         row = conn.execute("SELECT * FROM users WHERE uuid = ?", (uuid,)).fetchone()
+        return row_to_dict(row)
+
+
+def get_user_by_id(user_id: int) -> dict[str, object] | None:
+    with db_connect() as conn:
+        row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+        return row_to_dict(row)
+
+
+def get_user_by_platform_user_id(platform_user_id: str) -> dict[str, object] | None:
+    if not platform_user_id:
+        return None
+
+    with db_connect() as conn:
+        row = conn.execute(
+            """
+            SELECT users.*
+            FROM device_links
+            JOIN users ON users.id = device_links.user_id
+            WHERE device_links.platform_user_id = ?
+            """,
+            (platform_user_id,),
+        ).fetchone()
         return row_to_dict(row)
 
 
@@ -225,61 +502,68 @@ def get_user_by_session(session: str) -> dict[str, object] | None:
 
 
 def get_or_create_user(uuid: str, user_name: str | None = None) -> dict[str, object]:
-    existing = get_user_by_uuid(uuid)
+    account_uuid = uuid.strip() if uuid else ""
+    existing = get_user_by_uuid(account_uuid) if account_uuid else None
     if existing:
-        if int(existing["id"]) != DEBUG_USER_ID or int(existing["user_code"]) != DEBUG_USER_CODE:
-            with db_connect() as conn:
-                conn.execute("UPDATE sessions SET user_id = ? WHERE user_id = ?", (DEBUG_USER_ID, existing["id"]))
-                conn.execute(
-                    """
-                    UPDATE users
-                    SET id = ?, user_code = ?, user_name = ?, tutorial_step = ?, updated_at = ?
-                    WHERE uuid = ?
-                    """,
-                    (
-                        DEBUG_USER_ID,
-                        DEBUG_USER_CODE,
-                        user_name or DEFAULT_USER_NAME,
-                        DEBUG_TUTORIAL_STEP,
-                        utc_text(),
-                        uuid,
-                    ),
-                )
-                row = conn.execute("SELECT * FROM users WHERE uuid = ?", (uuid,)).fetchone()
-                emit_log(
-                    "[ACCOUNT] aligned user "
-                    f"id={DEBUG_USER_ID} user_code={DEBUG_USER_CODE} uuid={uuid}"
-                )
-                return dict(row)
         return existing
 
     now = utc_text()
     with db_connect() as conn:
-        conn.execute(
+        account_uuid = account_uuid or generate_account_uuid()
+        user_code = generate_user_code(conn)
+        cursor = conn.execute(
             """
-            INSERT OR REPLACE INTO users
-                (id, user_code, uuid, user_name, tutorial_step, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO users
+                (user_code, uuid, user_name, tutorial_step, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
             (
-                DEBUG_USER_ID,
-                DEBUG_USER_CODE,
-                uuid,
+                user_code,
+                account_uuid,
                 user_name or DEFAULT_USER_NAME,
                 DEBUG_TUTORIAL_STEP,
                 now,
                 now,
             ),
         )
-        row = conn.execute("SELECT * FROM users WHERE id = ?", (DEBUG_USER_ID,)).fetchone()
-        emit_log(f"[ACCOUNT] created user id={DEBUG_USER_ID} user_code={DEBUG_USER_CODE} uuid={uuid}")
+        row = conn.execute("SELECT * FROM users WHERE id = ?", (cursor.lastrowid,)).fetchone()
+        emit_log(f"[ACCOUNT] created user id={row['id']} user_code={user_code} uuid={account_uuid}")
         return dict(row)
+
+
+def create_game_account(user_name: str | None = None) -> dict[str, object]:
+    return get_or_create_user(generate_account_uuid(), user_name or DEFAULT_USER_NAME)
+
+
+def link_device_to_user(platform_user_id: str, user_id: int, account_uuid: str | None = None) -> None:
+    if not platform_user_id:
+        return
+
+    now = utc_text()
+    with db_connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO device_links (platform_user_id, user_id, uuid, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(platform_user_id) DO UPDATE SET
+                user_id = excluded.user_id,
+                uuid = excluded.uuid,
+                updated_at = excluded.updated_at
+            """,
+            (platform_user_id, user_id, account_uuid or "", now, now),
+        )
 
 
 def current_user() -> dict[str, object]:
     session = current_saovs_header_value("session", "")
     if isinstance(session, str) and session:
         user = get_user_by_session(session)
+        if user:
+            return user
+
+    platform_user_id = current_platform_user_id()
+    if platform_user_id:
+        user = get_user_by_platform_user_id(platform_user_id)
         if user:
             return user
 
@@ -295,6 +579,287 @@ def issue_session(user_id: int) -> str:
             (token, user_id, now, now),
         )
     return token
+
+
+def issue_or_reuse_session(user_id: int) -> str:
+    request_session = current_saovs_header_value("session", "")
+    if isinstance(request_session, str) and request_session:
+        user = get_user_by_session(request_session)
+        if user and int(user["id"]) == int(user_id):
+            return request_session
+    return issue_session(user_id)
+
+
+def create_login_user(username: str, password: str, display_name: str) -> tuple[dict[str, object] | None, str | None]:
+    login_name = normalize_login_name(username)
+    player_name = (display_name or username or DEFAULT_USER_NAME).strip()[:32] or DEFAULT_USER_NAME
+    if not is_valid_email(login_name):
+        return None, "Enter a valid email address."
+    if len(password) < 4:
+        return None, "Password must be at least 4 characters."
+
+    now = utc_text()
+    try:
+        with db_connect() as conn:
+            existing = conn.execute("SELECT 1 FROM login_users WHERE username = ?", (login_name,)).fetchone()
+            if existing is not None:
+                return None, "That email is already registered."
+
+            account_uuid = generate_account_uuid()
+            user_code = generate_user_code(conn)
+            cursor = conn.execute(
+                """
+                INSERT INTO users
+                    (user_code, uuid, user_name, tutorial_step, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (user_code, account_uuid, player_name, DEBUG_TUTORIAL_STEP, now, now),
+            )
+            user_id = int(cursor.lastrowid)
+            conn.execute(
+                """
+                INSERT INTO login_users
+                    (username, password_hash, user_id, display_name, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (login_name, hash_password(password), user_id, player_name, now, now),
+            )
+            row = conn.execute("SELECT * FROM login_users WHERE username = ?", (login_name,)).fetchone()
+            emit_log(f"[AUTH] registered email={login_name} user_id={user_id}")
+            return dict(row), None
+    except sqlite3.IntegrityError:
+        return None, "That email is already registered."
+
+
+def authenticate_login_user(username: str, password: str) -> dict[str, object] | None:
+    login_name = normalize_login_name(username)
+    with db_connect() as conn:
+        row = conn.execute("SELECT * FROM login_users WHERE username = ?", (login_name,)).fetchone()
+        if row is None or not verify_password(password, str(row["password_hash"])):
+            return None
+        now = utc_text()
+        conn.execute(
+            "UPDATE login_users SET last_login_at = ?, updated_at = ? WHERE id = ?",
+            (now, now, int(row["id"])),
+        )
+        emit_log(f"[AUTH] login username={login_name} user_id={row['user_id']}")
+        row = conn.execute("SELECT * FROM login_users WHERE id = ?", (int(row["id"]),)).fetchone()
+        return dict(row)
+
+
+def change_login_password(username: str, current_password: str, new_password: str) -> tuple[dict[str, object] | None, str | None]:
+    login_name = normalize_login_name(username)
+    if len(new_password) < 4:
+        return None, "New password must be at least 4 characters."
+    if new_password == BOOTSTRAP_LOGIN_PASSWORD:
+        return None, "Choose a different password."
+
+    with db_connect() as conn:
+        row = conn.execute("SELECT * FROM login_users WHERE username = ?", (login_name,)).fetchone()
+        if row is None or not verify_password(current_password, str(row["password_hash"])):
+            return None, "Invalid username or current password."
+
+        now = utc_text()
+        conn.execute(
+            """
+            UPDATE login_users
+            SET password_hash = ?,
+                password_change_required = 0,
+                last_login_at = ?,
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (hash_password(new_password), now, now, int(row["id"])),
+        )
+        emit_log(f"[AUTH] changed password username={login_name} user_id={row['user_id']}")
+        row = conn.execute("SELECT * FROM login_users WHERE id = ?", (int(row["id"]),)).fetchone()
+        return dict(row), None
+
+
+def generate_email_code() -> str:
+    return f"{secrets.randbelow(1_000_000):06d}"
+
+
+def create_email_verification_code(email: str) -> str:
+    login_name = normalize_login_name(email)
+    code = generate_email_code()
+    now = datetime.now(timezone.utc)
+    expires_at = now + timedelta(seconds=EMAIL_CODE_TTL_SECONDS)
+    with db_connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO email_verification_codes
+                (email, code_hash, created_at, expires_at, attempts)
+            VALUES (?, ?, ?, ?, 0)
+            ON CONFLICT(email) DO UPDATE SET
+                code_hash = excluded.code_hash,
+                created_at = excluded.created_at,
+                expires_at = excluded.expires_at,
+                attempts = 0
+            """,
+            (login_name, hash_password(code), utc_text(now), utc_text(expires_at)),
+        )
+    return code
+
+
+def send_verification_email(email: str, code: str) -> bool:
+    if not SMTP_HOST:
+        emit_log(f"[EMAIL DEV] registration code for {email}: {code}")
+        return False
+
+    message = EmailMessage()
+    message["Subject"] = "SAOVS registration code"
+    message["From"] = SMTP_FROM
+    message["To"] = email
+    message.set_content(
+        f"Your SAOVS registration code is {code}.\n\n"
+        f"It expires in {max(1, EMAIL_CODE_TTL_SECONDS // 60)} minutes."
+    )
+
+    try:
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=15) as smtp:
+            if SMTP_USE_TLS:
+                smtp.starttls()
+            if SMTP_USERNAME or SMTP_PASSWORD:
+                smtp.login(SMTP_USERNAME, SMTP_PASSWORD)
+            smtp.send_message(message)
+        emit_log(f"[EMAIL] sent registration code to {email}")
+        return True
+    except Exception as exc:
+        emit_log(f"[EMAIL] failed to send registration code to {email}: {exc}")
+        emit_log(f"[EMAIL DEV] registration code for {email}: {code}")
+        return False
+
+
+def request_registration_code(email: str) -> tuple[bool, str]:
+    login_name = normalize_login_name(email)
+    if not is_valid_email(login_name):
+        return False, "Enter a valid email address."
+
+    resend_cutoff = utc_text(datetime.now(timezone.utc) - timedelta(seconds=EMAIL_CODE_RESEND_SECONDS))
+    with db_connect() as conn:
+        existing = conn.execute("SELECT 1 FROM login_users WHERE username = ?", (login_name,)).fetchone()
+        recent_code = conn.execute(
+            "SELECT created_at FROM email_verification_codes WHERE email = ? AND created_at > ?",
+            (login_name, resend_cutoff),
+        ).fetchone()
+    if existing is not None:
+        return False, "That email is already registered."
+    if recent_code is not None:
+        return False, "Please wait before requesting another code."
+
+    code = create_email_verification_code(login_name)
+    sent = send_verification_email(login_name, code)
+    if sent:
+        return True, "Verification code sent. It expires in 5 minutes."
+    return True, "Verification code generated. Check the server log. It expires in 5 minutes."
+
+
+def verify_registration_code(email: str, code: str) -> tuple[bool, str | None]:
+    if not REQUIRE_EMAIL_VERIFICATION:
+        return True, None
+
+    login_name = normalize_login_name(email)
+    submitted_code = code.strip()
+    if not search(r"^\d{6}$", submitted_code):
+        return False, "Enter the 6-digit verification code."
+
+    now = utc_text()
+    with db_connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM email_verification_codes WHERE email = ?",
+            (login_name,),
+        ).fetchone()
+        if row is None:
+            return False, "Request a verification code first."
+        if str(row["expires_at"]) < now:
+            conn.execute("DELETE FROM email_verification_codes WHERE email = ?", (login_name,))
+            return False, "Verification code expired. Request a new one."
+        if int(row["attempts"]) >= EMAIL_CODE_ATTEMPT_LIMIT:
+            conn.execute("DELETE FROM email_verification_codes WHERE email = ?", (login_name,))
+            return False, "Too many code attempts. Request a new one."
+        if not verify_password(submitted_code, str(row["code_hash"])):
+            conn.execute(
+                "UPDATE email_verification_codes SET attempts = attempts + 1 WHERE email = ?",
+                (login_name,),
+            )
+            return False, "Invalid verification code."
+
+        conn.execute("DELETE FROM email_verification_codes WHERE email = ?", (login_name,))
+        return True, None
+
+
+def issue_auth_code(login_user: dict[str, object]) -> str:
+    code = "ps-auth-" + secrets.token_urlsafe(32)
+    now = datetime.now(timezone.utc)
+    expires_at = now + timedelta(seconds=AUTH_CODE_TTL_SECONDS)
+    with db_connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO auth_codes
+                (code, login_user_id, user_id, created_at, expires_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                code,
+                int(login_user["id"]),
+                int(login_user["user_id"]),
+                utc_text(now),
+                utc_text(expires_at),
+            ),
+        )
+    return code
+
+
+def redeem_auth_code(auth_code: str, platform_user_id: str = "") -> dict[str, object] | None:
+    code = (auth_code or "").strip()
+    if not code:
+        return None
+
+    if code == DEBUG_AUTH_CODE:
+        user = get_user_by_id(DEBUG_USER_ID)
+        if user:
+            link_device_to_user(platform_user_id, int(user["id"]), str(user["uuid"]))
+        return user
+
+    now = utc_text()
+    with db_connect() as conn:
+        row = conn.execute(
+            """
+            SELECT auth_codes.*, users.uuid
+            FROM auth_codes
+            JOIN users ON users.id = auth_codes.user_id
+            WHERE auth_codes.code = ? AND auth_codes.expires_at >= ?
+            """,
+            (code, now),
+        ).fetchone()
+        if row is None:
+            emit_log("[AUTH] rejected expired or unknown auth code")
+            return None
+
+        conn.execute(
+            """
+            UPDATE auth_codes
+            SET redeemed_at = COALESCE(redeemed_at, ?),
+                redeemed_platform_user_id = ?
+            WHERE code = ?
+            """,
+            (now, platform_user_id, code),
+        )
+        if platform_user_id:
+            conn.execute(
+                """
+                INSERT INTO device_links (platform_user_id, user_id, uuid, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(platform_user_id) DO UPDATE SET
+                    user_id = excluded.user_id,
+                    uuid = excluded.uuid,
+                    updated_at = excluded.updated_at
+                """,
+                (platform_user_id, int(row["user_id"]), str(row["uuid"]), now, now),
+            )
+
+    return get_user_by_id(int(row["user_id"]))
 
 
 def session_for_response() -> str:
@@ -362,7 +927,13 @@ def log_entry_category(path: str, raw: str) -> str:
         return "asset"
     if lower_path.startswith("/admin"):
         return "admin"
-    if "transfer" in lower_path or "bnid" in lower_path or "login.html" in lower_path:
+    if (
+        "transfer" in lower_path
+        or "bnid" in lower_path
+        or "login.html" in lower_path
+        or "register.html" in lower_path
+        or "change-password.html" in lower_path
+    ):
         return "auth"
     if lower_path.startswith("/api/") or "/api/" in lower_path:
         return "api"
@@ -549,13 +1120,88 @@ def load_offline_api_payload(file_name: str) -> dict[str, object] | None:
     return None
 
 
+def offline_payload_cache_key(file_name: str) -> str:
+    path = SAVED_ANDROID_FILES / "OfflineApi" / file_name
+    try:
+        stat = path.stat()
+        stamp = f"{stat.st_size}:{stat.st_mtime_ns}"
+    except OSError:
+        stamp = "missing"
+    return f"{ACCOUNT_PAYLOAD_CACHE_VERSION}:{file_name}:{stamp}"
+
+
+def account_payload_from_cache(file_name: str, user: dict[str, object]) -> dict[str, object] | None:
+    route_key = offline_payload_cache_key(file_name)
+    with db_connect() as conn:
+        row = conn.execute(
+            """
+            SELECT payload_json
+            FROM account_payloads
+            WHERE user_id = ? AND route_key = ?
+            """,
+            (int(user["id"]), route_key),
+        ).fetchone()
+        if row:
+            try:
+                payload = json.loads(str(row["payload_json"]))
+                return align_user_identity(payload, user) if isinstance(payload, dict) else None
+            except Exception:
+                conn.execute(
+                    "DELETE FROM account_payloads WHERE user_id = ? AND route_key = ?",
+                    (int(user["id"]), route_key),
+                )
+
+    base_payload = load_offline_api_payload(file_name)
+    if base_payload is None:
+        return None
+
+    payload = align_user_identity(base_payload, user)
+    now = utc_text()
+    with db_connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO account_payloads (user_id, route_key, payload_json, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(user_id, route_key) DO UPDATE SET
+                payload_json = excluded.payload_json,
+                updated_at = excluded.updated_at
+            """,
+            (
+                int(user["id"]),
+                route_key,
+                json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+                now,
+                now,
+            ),
+        )
+    return payload
+
+
 def align_user_identity(payload: dict[str, object], user: dict[str, object] | None = None) -> dict[str, object]:
     user = user or current_user()
-    aligned = dict(payload)
-    aligned["userId"] = int(user["id"])
-    aligned["userCode"] = int(user["user_code"])
-    aligned.setdefault("userName", str(user["user_name"]))
-    return aligned
+    return align_identity_value(payload, user)
+
+
+def align_identity_value(value: object, user: dict[str, object]) -> object:
+    if isinstance(value, dict):
+        aligned: dict[object, object] = {}
+        for key, item in value.items():
+            if key in {"userId", "playerId"}:
+                aligned[key] = int(user["id"])
+            elif key == "userCode":
+                aligned[key] = int(user["user_code"])
+            elif key == "userName":
+                aligned[key] = str(user["user_name"])
+            elif key == "uuid":
+                aligned[key] = str(user["uuid"])
+            else:
+                aligned[key] = align_identity_value(item, user)
+        return aligned
+
+    if isinstance(value, list):
+        return [align_identity_value(item, user) for item in value]
+
+    return value
 
 
 init_db()
@@ -573,6 +1219,10 @@ def log_request() -> None:
 
     body = request.get_data(cache=True)
     if body:
+        if is_sensitive_form_request():
+            emit_log("[BODY] <redacted login form>")
+            emit_log("=====================================================\n")
+            return
         preview = body[:512]
         emit_log(f"[BODY] {preview!r}")
         emit_log(f"[BODY HEX] {preview.hex(' ')}")
@@ -584,6 +1234,20 @@ def log_request() -> None:
         if len(body) > len(preview):
             emit_log(f"[BODY] ... truncated, total={len(body)} bytes")
     emit_log("=====================================================\n")
+
+
+def is_sensitive_form_request() -> bool:
+    if request.path not in {
+        "/",
+        "/login.html",
+        "/register.html",
+        "/change-password.html",
+        "/bnid/login",
+        "/bnid/login.html",
+    }:
+        return False
+    content_type = request.headers.get("Content-Type", "")
+    return "application/x-www-form-urlencoded" in content_type or "multipart/form-data" in content_type
 
 
 def dump_request_body(body: bytes) -> Path:
@@ -1081,6 +1745,372 @@ def puzzle_auth_page(auth_code: str = DEBUG_AUTH_CODE) -> Response:
     return Response(html, mimetype="text/html")
 
 
+def account_page_url(path: str, redirect_uri: str | None = None) -> str:
+    if not redirect_uri:
+        return path
+    return f"{path}?redirect_uri={quote(redirect_uri, safe='')}"
+
+
+def current_login_action() -> str:
+    if request.path in {"/login.html", "/bnid/login", "/bnid/login.html"}:
+        return request.path
+    return "/login.html"
+
+
+def render_account_shell(
+    title: str,
+    intro: str,
+    body: str,
+    error: str = "",
+    message: str = "",
+) -> Response:
+    safe_title = escape(title, quote=False)
+    safe_intro = escape(intro, quote=False)
+    safe_error = escape(error, quote=False)
+    safe_message = escape(message, quote=False)
+    html = f"""<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>{safe_title}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    * {{ box-sizing: border-box; }}
+    html, body {{
+      min-height: 100%;
+      margin: 0;
+      background: #07111f;
+      color: #eef6ff;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }}
+    body {{
+      display: grid;
+      place-items: center;
+      padding: 18px;
+    }}
+    main {{
+      width: min(430px, 100%);
+      border: 1px solid rgba(56, 189, 248, 0.28);
+      border-radius: 8px;
+      background: #101b2b;
+      padding: 22px;
+      box-shadow: 0 18px 45px rgba(0, 0, 0, 0.36);
+    }}
+    h1 {{
+      margin: 0 0 6px;
+      font-size: 24px;
+      line-height: 1.2;
+    }}
+    p {{
+      margin: 0 0 18px;
+      color: #a8bbd1;
+      line-height: 1.45;
+    }}
+    label {{
+      display: block;
+      margin: 11px 0 6px;
+      color: #cad9ea;
+      font-size: 13px;
+      font-weight: 700;
+    }}
+    input {{
+      width: 100%;
+      min-height: 46px;
+      border: 1px solid rgba(148, 163, 184, 0.45);
+      border-radius: 8px;
+      background: #071120;
+      color: #f8fbff;
+      font-size: 16px;
+      padding: 10px 12px;
+    }}
+    button, .link-button {{
+      align-items: center;
+      display: inline-flex;
+      justify-content: center;
+      width: 100%;
+      min-height: 46px;
+      border: 0;
+      border-radius: 8px;
+      background: #31d7ff;
+      color: #03111d;
+      font-size: 16px;
+      font-weight: 800;
+      text-decoration: none;
+    }}
+    button {{
+      margin-top: 14px;
+    }}
+    .button-row {{
+      display: grid;
+      gap: 10px;
+      grid-template-columns: 1fr;
+      margin-top: 14px;
+    }}
+    .button-row button {{
+      margin-top: 0;
+    }}
+    .secondary {{
+      background: #26394f;
+      border: 1px solid rgba(125, 211, 252, 0.32);
+      color: #eef6ff;
+    }}
+    .links {{
+      display: grid;
+      gap: 10px;
+      grid-template-columns: 1fr 1fr;
+      margin-top: 16px;
+    }}
+    .links.single {{
+      grid-template-columns: 1fr;
+    }}
+    .error, .message {{
+      margin-bottom: 14px;
+      border-radius: 8px;
+      padding: 10px 12px;
+      line-height: 1.35;
+    }}
+    .error {{
+      border: 1px solid rgba(255, 109, 116, 0.55);
+      background: rgba(255, 109, 116, 0.11);
+      color: #ffd3d7;
+    }}
+    .message {{
+      border: 1px solid rgba(52, 211, 153, 0.5);
+      background: rgba(52, 211, 153, 0.1);
+      color: #c7ffe7;
+    }}
+    .hint {{
+      margin: 8px 0 0;
+      color: #9fb4cc;
+      font-size: 13px;
+    }}
+    @media (min-width: 440px) {{
+      .button-row {{
+        grid-template-columns: 1fr 1fr;
+      }}
+    }}
+  </style>
+</head>
+<body>
+  <main>
+    <h1>{safe_title}</h1>
+    <p>{safe_intro}</p>
+    {f'<div class="error">{safe_error}</div>' if error else ''}
+    {f'<div class="message">{safe_message}</div>' if message else ''}
+    {body}
+  </main>
+</body>
+</html>
+"""
+    return Response(html, mimetype="text/html")
+
+
+def render_login_page(
+    redirect_uri: str | None = None,
+    error: str = "",
+    username: str = "",
+) -> Response:
+    safe_action = escape(current_login_action(), quote=True)
+    safe_redirect = escape(redirect_uri or "", quote=True)
+    safe_username = escape(username, quote=True)
+    register_href = escape(account_page_url("/register.html", redirect_uri), quote=True)
+    change_href = escape(account_page_url("/change-password.html", redirect_uri), quote=True)
+    body = f"""
+    <form method="post" action="{safe_action}">
+      <input type="hidden" name="mode" value="login">
+      <input type="hidden" name="redirect_uri" value="{safe_redirect}">
+      <label for="login-email">Email</label>
+      <input id="login-email" name="email" value="{safe_username}" autocomplete="username" required>
+      <label for="login-password">Password</label>
+      <input id="login-password" name="password" type="password" autocomplete="current-password" required>
+      <button type="submit">Login</button>
+    </form>
+    <div class="links">
+      <a class="link-button secondary" href="{register_href}">Create Account</a>
+      <a class="link-button secondary" href="{change_href}">Change Password</a>
+    </div>
+"""
+    return render_account_shell("SAOVS Login", "Use your private-server account to continue.", body, error=error)
+
+
+def render_register_page(
+    redirect_uri: str | None = None,
+    error: str = "",
+    message: str = "",
+    email: str = "",
+    player_name: str = "",
+) -> Response:
+    safe_action = escape(account_page_url("/register.html", redirect_uri), quote=True)
+    safe_redirect = escape(redirect_uri or "", quote=True)
+    safe_email = escape(email, quote=True)
+    safe_player_name = escape(player_name or "", quote=True)
+    login_href = escape(account_page_url("/login.html", redirect_uri), quote=True)
+    verification_fields = ""
+    send_code_button = ""
+    if REQUIRE_EMAIL_VERIFICATION:
+        verification_fields = """
+      <label for="register-code">6-Digit Code</label>
+      <input id="register-code" name="verification_code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6">
+"""
+        send_code_button = '<button class="secondary" type="submit" name="mode" value="send_code">Send Code</button>'
+
+    body = f"""
+    <form method="post" action="{safe_action}">
+      <input type="hidden" name="redirect_uri" value="{safe_redirect}">
+      <label for="register-email">Email</label>
+      <input id="register-email" name="email" value="{safe_email}" type="email" autocomplete="email" required>
+      {verification_fields}
+      <label for="register-password">Password</label>
+      <input id="register-password" name="password" type="password" autocomplete="new-password">
+      <label for="player-name">Player Name</label>
+      <input id="player-name" name="player_name" value="{safe_player_name}" maxlength="32">
+      <div class="button-row">
+        {send_code_button}
+        <button type="submit" name="mode" value="register">Create Account</button>
+      </div>
+    </form>
+    <div class="links single">
+      <a class="link-button secondary" href="{login_href}">Back To Login</a>
+    </div>
+"""
+    return render_account_shell(
+        "Create Account",
+        "Register with email verification before entering the game.",
+        body,
+        error=error,
+        message=message,
+    )
+
+
+def render_change_password_page(
+    redirect_uri: str | None = None,
+    error: str = "",
+    message: str = "",
+    username: str = "",
+) -> Response:
+    safe_action = escape(account_page_url("/change-password.html", redirect_uri), quote=True)
+    safe_redirect = escape(redirect_uri or "", quote=True)
+    safe_username = escape(username, quote=True)
+    login_href = escape(account_page_url("/login.html", redirect_uri), quote=True)
+    body = f"""
+    <form method="post" action="{safe_action}">
+      <input type="hidden" name="mode" value="change_password">
+      <input type="hidden" name="redirect_uri" value="{safe_redirect}">
+      <label for="change-email">Email</label>
+      <input id="change-email" name="email" value="{safe_username}" autocomplete="username" required>
+      <label for="current-password">Current Password</label>
+      <input id="current-password" name="password" type="password" autocomplete="current-password" required>
+      <label for="new-password">New Password</label>
+      <input id="new-password" name="new_password" type="password" autocomplete="new-password" required>
+      <button type="submit">Change Password</button>
+    </form>
+    <div class="links single">
+      <a class="link-button secondary" href="{login_href}">Back To Login</a>
+    </div>
+"""
+    return render_account_shell(
+        "Change Password",
+        "Confirm the old password before setting a new one.",
+        body,
+        error=error,
+        message=message,
+    )
+
+
+def render_bnid_login_page(
+    redirect_uri: str | None = None,
+    error: str = "",
+    username: str = "",
+    player_name: str = "",
+    require_password_change: bool = False,
+) -> Response:
+    if require_password_change:
+        return render_change_password_page(redirect_uri, error, username=username)
+    return render_login_page(redirect_uri, error, username)
+
+
+def handle_bnid_login_post() -> Response:
+    mode = request.form.get("mode", "login")
+    if mode in {"register", "send_code"}:
+        return handle_register_post()
+    if mode == "change_password":
+        return handle_change_password_post()
+
+    redirect_uri = request.form.get("redirect_uri") or request.args.get("redirect_uri")
+    username = request.form.get("email") or request.form.get("username", "")
+    password = request.form.get("password", "")
+
+    login_user = authenticate_login_user(username, password)
+    if login_user is None:
+        return render_login_page(redirect_uri, "Invalid email or password.", username)
+    if bool_from_db(login_user.get("password_change_required")):
+        return render_change_password_page(
+            redirect_uri,
+            "Change this bootstrap password before continuing.",
+            username=username,
+        )
+
+    auth_code = issue_auth_code(login_user)
+    target = local_auth_result_url(auth_code, redirect_uri)
+    emit_log(f"[AUTH] returning auth_result for login={normalize_login_name(username)} user_id={login_user['user_id']}")
+    return redirect(target, code=302)
+
+
+def handle_register_post() -> Response:
+    redirect_uri = request.form.get("redirect_uri") or request.args.get("redirect_uri")
+    email = request.form.get("email") or request.form.get("username", "")
+    login_email = normalize_login_name(email)
+    password = request.form.get("password", "")
+    player_name = request.form.get("player_name", "")
+    mode = request.form.get("mode", "register")
+
+    if mode == "send_code":
+        ok, message = request_registration_code(email)
+        if ok:
+            return render_register_page(redirect_uri, message=message, email=login_email, player_name=player_name)
+        return render_register_page(redirect_uri, error=message, email=email, player_name=player_name)
+
+    if not is_valid_email(login_email):
+        return render_register_page(redirect_uri, error="Enter a valid email address.", email=email, player_name=player_name)
+    if len(password) < 4:
+        return render_register_page(redirect_uri, error="Password must be at least 4 characters.", email=login_email, player_name=player_name)
+    with db_connect() as conn:
+        existing = conn.execute("SELECT 1 FROM login_users WHERE username = ?", (login_email,)).fetchone()
+    if existing is not None:
+        return render_register_page(redirect_uri, error="That email is already registered.", email=login_email, player_name=player_name)
+
+    if REQUIRE_EMAIL_VERIFICATION:
+        ok, error = verify_registration_code(email, request.form.get("verification_code", ""))
+        if not ok:
+            return render_register_page(redirect_uri, error=error or "Could not verify email.", email=email, player_name=player_name)
+
+    display_name = player_name or login_email.split("@", 1)[0] or DEFAULT_USER_NAME
+    login_user, error = create_login_user(login_email, password, display_name)
+    if error or login_user is None:
+        return render_register_page(redirect_uri, error=error or "Could not create account.", email=login_email, player_name=player_name)
+
+    auth_code = issue_auth_code(login_user)
+    target = local_auth_result_url(auth_code, redirect_uri)
+    emit_log(f"[AUTH] returning auth_result for login={login_email} user_id={login_user['user_id']}")
+    return redirect(target, code=302)
+
+
+def handle_change_password_post() -> Response:
+    redirect_uri = request.form.get("redirect_uri") or request.args.get("redirect_uri")
+    username = request.form.get("email") or request.form.get("username", "")
+    password = request.form.get("password", "")
+    new_password = request.form.get("new_password", "")
+
+    login_user, error = change_login_password(username, password, new_password)
+    if error or login_user is None:
+        return render_change_password_page(redirect_uri, error or "Could not change password.", username=username)
+
+    auth_code = issue_auth_code(login_user)
+    target = local_auth_result_url(auth_code, redirect_uri)
+    emit_log(f"[AUTH] returning auth_result after password change for login={normalize_login_name(username)} user_id={login_user['user_id']}")
+    return redirect(target, code=302)
+
+
 def local_auth_result_url(auth_code: str = DEBUG_AUTH_CODE, redirect_uri: str | None = None) -> str:
     if redirect_uri:
         redirect_uri = redirect_uri.strip()
@@ -1117,8 +2147,11 @@ def index() -> Response:
     log_request()
     original = request.args.get("original", "")
     if original:
-        emit_log(f"[LOCAL LOGIN] Auto-returning auth_result for original: {unquote(original)}")
-        return puzzle_auth_page(request.args.get("auth_code") or DEBUG_AUTH_CODE)
+        decoded_original = unquote(original)
+        query = parse_qs(urlparse(decoded_original).query)
+        redirect_uri = request.args.get("redirect_uri") or (query.get("redirect_uri") or [""])[0]
+        emit_log(f"[LOCAL LOGIN] Rendering account login for original: {decoded_original}")
+        return render_bnid_login_page(redirect_uri)
 
     original_text = escape(unquote(original), quote=False)
     html = f"""<!doctype html>
@@ -1156,35 +2189,45 @@ def callback() -> Response:
     return puzzle_auth_page(auth_code)
 
 
-@app.route("/login.html", methods=["GET"])
+@app.route("/login.html", methods=["GET", "POST"])
 def login_html() -> Response:
     log_request()
-    auth_code = request.args.get("auth_code") or request.args.get("code") or DEBUG_AUTH_CODE
     redirect_uri = request.args.get("redirect_uri")
+    if request.method == "POST":
+        return handle_bnid_login_post()
     if is_relative_bnid_redirect(redirect_uri):
-        emit_log(f"[LOCAL LOGIN] Relative redirect_uri={redirect_uri!r}; redirecting to configured callback origin")
-
-    target = local_auth_result_url(auth_code, redirect_uri)
-    emit_log(f"[LOCAL LOGIN] Redirecting login URL to auth result: {target}")
-    return redirect(target, code=302)
+        emit_log(f"[LOCAL LOGIN] Relative redirect_uri={redirect_uri!r}; rendering account login page")
+    return render_bnid_login_page(redirect_uri)
 
 
-@app.route("/bnid/login", methods=["GET"])
-@app.route("/bnid/login.html", methods=["GET"])
+@app.route("/register.html", methods=["GET", "POST"])
+def register_html() -> Response:
+    log_request()
+    redirect_uri = request.args.get("redirect_uri")
+    if request.method == "POST":
+        return handle_register_post()
+    return render_register_page(redirect_uri)
+
+
+@app.route("/change-password.html", methods=["GET", "POST"])
+def change_password_html() -> Response:
+    log_request()
+    redirect_uri = request.args.get("redirect_uri")
+    if request.method == "POST":
+        return handle_change_password_post()
+    return render_change_password_page(redirect_uri)
+
+
+@app.route("/bnid/login", methods=["GET", "POST"])
+@app.route("/bnid/login.html", methods=["GET", "POST"])
 def bnid_login_html() -> Response:
     log_request()
-    auth_code = (
-        request.args.get("auth_code")
-        or request.args.get("code")
-        or DEBUG_AUTH_CODE
-    )
     redirect_uri = request.args.get("redirect_uri")
+    if request.method == "POST":
+        return handle_bnid_login_post()
     if is_relative_bnid_redirect(redirect_uri):
-        emit_log(f"[BNID TEST LOGIN] Relative redirect_uri={redirect_uri!r}; redirecting to configured callback origin")
-
-    target = local_auth_result_url(auth_code, redirect_uri)
-    emit_log(f"[BNID TEST LOGIN] Redirecting host={request.host} to auth result: {target}")
-    return redirect(target, code=302)
+        emit_log(f"[BNID LOGIN] Relative redirect_uri={redirect_uri!r}; rendering account login page")
+    return render_bnid_login_page(redirect_uri)
 
 
 @app.route("/bnid/callback", methods=["GET"])
@@ -1219,9 +2262,9 @@ def user_check_version() -> Response:
 
 def make_user_login_payload(user: dict[str, object] | None = None) -> dict[str, object]:
     user = user or current_user()
-    offline = load_offline_api_payload("user_login.json")
+    offline = account_payload_from_cache("user_login.json", user)
     if offline is not None:
-        return align_user_identity(offline, user)
+        return offline
 
     return {
         "callLoginBonus": False,
@@ -1245,7 +2288,10 @@ def make_user_login_payload(user: dict[str, object] | None = None) -> dict[str, 
 def user_login() -> Response:
     log_request()
     user = current_user()
-    session = issue_session(int(user["id"]))
+    platform_user_id = current_platform_user_id()
+    if platform_user_id:
+        link_device_to_user(platform_user_id, int(user["id"]), str(user["uuid"]))
+    session = issue_or_reuse_session(int(user["id"]))
     payload = make_user_login_payload(user)
     if wants_saovs_frame():
         return make_saovs_frame_response(payload, session=session)
@@ -1280,7 +2326,7 @@ def make_user_growth_info() -> dict[str, object]:
 
 def make_user_info(user: dict[str, object] | None = None) -> dict[str, object]:
     user = user or current_user()
-    home = load_offline_api_payload("home_index.json")
+    home = account_payload_from_cache("home_index.json", user)
     if home and isinstance(home.get("userInfo"), dict):
         return align_user_identity(home["userInfo"], user)
 
@@ -1338,15 +2384,16 @@ def make_debug_party() -> dict[str, object]:
 
 def bootstrap_payload_for_path(path: str) -> dict[str, object] | None:
     normalized = path.lower()
+    user = current_user()
     for suffix, file_name in OFFLINE_API_ROUTE_FILES.items():
         if normalized.endswith(suffix):
-            payload = load_offline_api_payload(file_name)
+            payload = account_payload_from_cache(file_name, user)
             if payload is not None:
                 if isinstance(payload.get("userInfo"), dict):
                     payload = dict(payload)
-                    payload["userInfo"] = align_user_identity(payload["userInfo"])
+                    payload["userInfo"] = align_user_identity(payload["userInfo"], user)
                 else:
-                    payload = align_user_identity(payload) if suffix == "user/login" else payload
+                    payload = align_user_identity(payload, user) if suffix == "user/login" else payload
                 emit_log(f"[OFFLINE API] {path} <- {file_name}")
                 return payload
 
@@ -1452,7 +2499,25 @@ def bootstrap_payload_for_path(path: str) -> dict[str, object] | None:
 @app.route("/api/local/saovs/transfer/executeBNID", methods=["GET", "POST"])
 def transfer_execute_bnid() -> Response:
     log_request()
-    user = get_or_create_user(current_request_uuid())
+    payload_in = current_saovs_payload() or {}
+    auth_code = (
+        payload_in.get("authenticationCode")
+        or payload_in.get("auth_code")
+        or payload_in.get("code")
+        or request.args.get("authenticationCode")
+        or request.args.get("auth_code")
+        or request.args.get("code")
+        or ""
+    )
+    platform_user_id = current_platform_user_id()
+    user = redeem_auth_code(str(auth_code), platform_user_id)
+    if user is None:
+        emit_log("[AUTH] transfer/executeBNID rejected missing or invalid auth code")
+        if wants_saovs_frame():
+            return make_saovs_frame_response({}, status=10001)
+        return jsonify({"statusCode": 10001, "error": "Invalid or expired auth code"}), 401
+
+    link_device_to_user(platform_user_id, int(user["id"]), str(user["uuid"]))
     payload = {
         "uuid": str(user["uuid"]),
         "userCode": str(user["user_code"]),
@@ -1579,14 +2644,30 @@ def admin_users() -> Response:
         rows = conn.execute(
             """
             SELECT users.id, users.user_code, users.uuid, users.user_name, users.tutorial_step,
-                   users.created_at, users.updated_at, COUNT(sessions.token) AS session_count
+                   users.created_at, users.updated_at,
+                   (SELECT COUNT(*) FROM sessions WHERE sessions.user_id = users.id) AS total_session_count,
+                   (
+                       SELECT COUNT(*)
+                       FROM sessions
+                       WHERE sessions.user_id = users.id
+                         AND datetime(sessions.last_seen_at) >= datetime('now', ?)
+                   ) AS active_session_count,
+                   (
+                       SELECT GROUP_CONCAT(login_users.username, ', ')
+                       FROM login_users
+                       WHERE login_users.user_id = users.id
+                   ) AS login_names
             FROM users
-            LEFT JOIN sessions ON sessions.user_id = users.id
-            GROUP BY users.id
             ORDER BY users.id
-            """
+            """,
+            (f"-{SESSION_ACTIVE_SECONDS} seconds",),
         ).fetchall()
-    return jsonify({"users": [dict(row) for row in rows]})
+    users = []
+    for row in rows:
+        item = dict(row)
+        item["session_count"] = item["active_session_count"]
+        users.append(item)
+    return jsonify({"users": users, "activeSessionSeconds": SESSION_ACTIVE_SECONDS})
 
 
 @app.route("/<path:path>", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])

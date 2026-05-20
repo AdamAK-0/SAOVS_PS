@@ -167,10 +167,10 @@
 
     const playerList = users && Array.isArray(users.users) ? users.users : [];
     const sessions = playerList.reduce(function (sum, user) {
-      return sum + Number(user.session_count || 0);
+      return sum + Number(user.active_session_count || user.session_count || 0);
     }, 0);
     els.playerCountValue.textContent = String(playerList.length);
-    els.playerCountMeta.textContent = sessions + " sessions";
+    els.playerCountMeta.textContent = sessions + " active sessions";
 
     const contentOk = health && health.contentRootExists;
     els.heroAssets.textContent = contentOk ? "Ready" : "Missing";
@@ -301,19 +301,21 @@
     }
 
     const rows = users.map(function (user) {
+      const activeSessions = Number(user.active_session_count || user.session_count || 0);
+      const totalSessions = Number(user.total_session_count || 0);
       return [
         '<div class="player-row">',
         '  <span>' + escapeHtml(user.id) + "</span>",
         '  <strong class="truncate">' + escapeHtml(user.user_name) + "</strong>",
-        '  <span class="truncate">' + escapeHtml(user.user_code) + "</span>",
-        '  <span>' + escapeHtml(user.session_count || 0) + " sessions</span>",
+        '  <span class="truncate">' + escapeHtml(user.login_names || user.user_code) + "</span>",
+        '  <span>' + escapeHtml(activeSessions) + " active / " + escapeHtml(totalSessions) + " total</span>",
         "</div>",
       ].join("");
     }).join("");
 
     els.playersTable.innerHTML = [
       '<div class="player-row header">',
-      "  <span>ID</span><span>Name</span><span>User Code</span><span>Sessions</span>",
+      "  <span>ID</span><span>Name</span><span>Login/User Code</span><span>Sessions</span>",
       "</div>",
       rows,
     ].join("");
