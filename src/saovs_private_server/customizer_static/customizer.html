@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SAOVS Equipment Customizer</title>
+  <link rel="stylesheet" href="/customize/assets/customizer.css">
+</head>
+<body>
+  <main class="shell">
+    <section id="loginView" class="login-view">
+      <div class="login-panel">
+        <div class="mark">SA</div>
+        <h1>Equipment Customizer</h1>
+        <form id="loginForm" class="login-form">
+          <label for="emailInput">Email</label>
+          <input id="emailInput" name="email" type="email" autocomplete="username" required>
+          <label for="passwordInput">Password</label>
+          <input id="passwordInput" name="password" type="password" autocomplete="current-password" required>
+          <button type="submit">Login</button>
+          <p id="loginError" class="form-error" role="alert"></p>
+        </form>
+      </div>
+    </section>
+
+    <section id="appView" class="app-view hidden">
+      <header class="topbar">
+        <div>
+          <span class="eyebrow">SAOVS</span>
+          <h1>Ability Cards</h1>
+        </div>
+        <div class="account-strip">
+          <span id="accountName">-</span>
+          <span id="accountId">ID -</span>
+          <button id="logoutBtn" class="ghost-button" type="button">Logout</button>
+        </div>
+      </header>
+
+      <section class="summary-row" aria-label="Account summary">
+        <div class="metric">
+          <span>Ability Copies</span>
+          <strong id="ownedCount">0</strong>
+        </div>
+        <div class="metric">
+          <span>Owned Groups</span>
+          <strong id="copyCount">0</strong>
+        </div>
+        <div class="metric">
+          <span>Catalog Cards</span>
+          <strong id="catalogCount">0</strong>
+        </div>
+      </section>
+
+      <section class="toolbar" aria-label="Catalog filters">
+        <label class="search-box" for="searchInput">
+          <span>Search</span>
+          <input id="searchInput" type="search" autocomplete="off" placeholder="Name, character, or code">
+        </label>
+        <label for="rarityFilter">
+          <span>Rarity</span>
+          <select id="rarityFilter">
+            <option value="">All</option>
+            <option value="2">2 Star</option>
+            <option value="3">3 Star</option>
+            <option value="4">4 Star</option>
+          </select>
+        </label>
+        <label class="check-label" for="ownedOnlyInput">
+          <input id="ownedOnlyInput" type="checkbox">
+          <span>Owned only</span>
+        </label>
+      </section>
+
+      <section class="workspace">
+        <aside class="editor-panel">
+          <div class="editor-card">
+            <img id="editorImage" alt="" class="editor-image">
+            <div>
+              <span id="editorCode" class="eyebrow">Select Card</span>
+              <h2 id="editorTitle">No card selected</h2>
+              <p id="editorMeta">-</p>
+            </div>
+            <form id="editorForm" class="editor-form">
+              <label for="levelInput">Level</label>
+              <input id="levelInput" name="level" type="number" min="1" max="55" value="55" disabled>
+              <label for="potentialInput">Potential</label>
+              <input id="potentialInput" name="potential" type="number" min="0" max="5" value="5" disabled>
+              <label for="copiesInput" id="copiesLabel">Copies</label>
+              <input id="copiesInput" name="copies" type="number" min="1" max="99" value="1" disabled>
+              <label class="check-label" for="lockedInput">
+                <input id="lockedInput" name="locked" type="checkbox" disabled>
+                <span>Locked</span>
+              </label>
+              <div class="editor-actions">
+                <button id="saveBtn" type="submit" disabled>Save</button>
+                <button id="removeBtn" class="danger-button" type="button" disabled>Remove</button>
+              </div>
+              <p id="editorMessage" class="form-message" role="status"></p>
+            </form>
+          </div>
+        </aside>
+
+        <section class="lists">
+          <div class="section-head">
+            <h2>Owned</h2>
+            <span id="ownedMeta">0 cards</span>
+          </div>
+          <div id="ownedList" class="owned-list"></div>
+
+          <div class="section-head catalog-head">
+            <h2>Catalog</h2>
+            <span id="catalogMeta">0 shown</span>
+          </div>
+          <div id="catalogGrid" class="catalog-grid"></div>
+        </section>
+      </section>
+    </section>
+  </main>
+  <div id="toast" class="toast" role="status"></div>
+  <script src="/customize/assets/customizer.js"></script>
+</body>
+</html>

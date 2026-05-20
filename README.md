@@ -142,6 +142,39 @@ POST /admin/api/logs/clear
 Log in with `SAOVS_ADMIN_USERNAME` and `SAOVS_ADMIN_PASSWORD`. If
 `SAOVS_ADMIN_TOKEN` is set, scripts can still pass it via `X-Admin-Token`.
 
+## Player Equipment Customizer
+
+Players can open the browser customizer at:
+
+```text
+https://customizeequipement.saovs.com/
+```
+
+The corrected spelling `customizeequipment.saovs.com` is accepted too. Point
+either hostname to this same server. The page also works locally at:
+
+```text
+http://127.0.0.1:8000/customize
+```
+
+Players log in with the same email/password used for transfer. The current
+first slice edits ability cards. Owned cards are stored as copy groups, so the
+same card can have separate groups with different level, potential, locked
+state, and copy counts. Catalog actions add new copies, while owned actions
+edit or delete a selected copy group. Changes are stored in SQLite and the
+server rebuilds the per-player `ability/index` payload from that database
+state.
+
+The game also supplies three maxed default copies of each catalog ability from
+`user_list.db`. The customizer stores those defaults as non-editable groups and
+excludes them from generated transfer payloads, so customizer edits are added
+on top without duplicating the game-provided cards.
+
+The ability catalog lives at `content/customizer/ability_catalog.json`. Card
+art is cached on demand into `content/customizer/ability_images/`; that image
+cache is ignored by Git so it can grow locally or on the VPS without bloating
+the repository.
+
 ## Public Deployment Shape
 
 For real mobile devices, the server should be hosted behind real HTTPS domains:

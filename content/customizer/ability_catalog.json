@@ -1,0 +1,2092 @@
+{
+  "abilities": [
+    {
+      "code": 20001,
+      "gameId": 25,
+      "character": "Lisbeth",
+      "name": "Blacksmith's Task",
+      "imageUrl": "https://drive.google.com/uc?id=1kFXR89KCOAHrn4Ocbch_tX0jqRXI3hG-",
+      "rarity": 2,
+      "maxLevel": 35
+    },
+    {
+      "code": 20002,
+      "gameId": 36,
+      "character": "",
+      "name": "Stroll in the Sky",
+      "imageUrl": "https://drive.google.com/uc?id=1LHeqnVQsBzXN_9rWfh06H94PJJoGwhLg",
+      "rarity": 2,
+      "maxLevel": 35
+    },
+    {
+      "code": 21001,
+      "gameId": 27,
+      "character": "Layla",
+      "name": "Darkness Falls",
+      "imageUrl": "https://drive.google.com/uc?id=1cfK3V4_vPvseqTxHi83NFF19YQlEaLFd",
+      "rarity": 2,
+      "maxLevel": 35
+    },
+    {
+      "code": 21002,
+      "gameId": 42,
+      "character": "",
+      "name": "Girl in the Library",
+      "imageUrl": "https://drive.google.com/uc?id=1wElPjCpnwZVuzYObtZN3mrYpB-YhcmDy",
+      "rarity": 2,
+      "maxLevel": 35
+    },
+    {
+      "code": 21003,
+      "gameId": 22,
+      "character": "Eugeo",
+      "name": "Rebellious Boy",
+      "imageUrl": "https://drive.google.com/uc?id=1UYyhU-p3gfZaI5Qf4rzNQ0ZnqB98qRjZ",
+      "rarity": 2,
+      "maxLevel": 35
+    },
+    {
+      "code": 21004,
+      "gameId": 53,
+      "character": "Yuuki",
+      "name": "Confident Smile",
+      "imageUrl": "https://drive.google.com/uc?id=1lVH7-6FHgr-I2-TB00cTGYg5L-fHIY7t",
+      "rarity": 2,
+      "maxLevel": 35
+    },
+    {
+      "code": 21005,
+      "gameId": 26,
+      "character": "Leafa",
+      "name": "As the Wind Blows",
+      "imageUrl": "https://drive.google.com/uc?id=1O8vRjsMIUFz7gxM3HmXsZ07-xluf19pe",
+      "rarity": 2,
+      "maxLevel": 35
+    },
+    {
+      "code": 21006,
+      "gameId": 35,
+      "character": "",
+      "name": "Triumphant Warrior",
+      "imageUrl": "https://drive.google.com/uc?id=1kBiedye1ExYMtGeUuGNrLJSQMBPUMXOU",
+      "rarity": 2,
+      "maxLevel": 35
+    },
+    {
+      "code": 21007,
+      "gameId": 37,
+      "character": "",
+      "name": "Advance of the Sylphs",
+      "imageUrl": "https://drive.google.com/uc?id=1LnZ4SbrIkVWUIVyrzIWP1fnOVaXExyO_",
+      "rarity": 2,
+      "maxLevel": 35
+    },
+    {
+      "code": 21008,
+      "gameId": 38,
+      "character": "",
+      "name": "Cait Sith Lord",
+      "imageUrl": "https://drive.google.com/uc?id=1gmM8F7Ia7p8gWo9u564I8cstNTogLlkT",
+      "rarity": 2,
+      "maxLevel": 35
+    },
+    {
+      "code": 21009,
+      "gameId": 40,
+      "character": "",
+      "name": "Rabid Smile",
+      "imageUrl": "https://drive.google.com/uc?id=1BwN9Jsy_uociewkf4H6jd1VQ-Ov9k1OQ",
+      "rarity": 2,
+      "maxLevel": 35
+    },
+    {
+      "code": 21010,
+      "gameId": 41,
+      "character": "",
+      "name": "Murderous Eyes",
+      "imageUrl": "https://drive.google.com/uc?id=1MVtuQscupexBYNE5fZGlsyN7kcv098-W",
+      "rarity": 2,
+      "maxLevel": 35
+    },
+    {
+      "code": 21011,
+      "gameId": 46,
+      "character": "",
+      "name": "Turn The Tables!",
+      "imageUrl": "https://drive.google.com/uc?id=11b2GKLE4XIdnfz7KZd_dYR2V2YYXajin",
+      "rarity": 2,
+      "maxLevel": 35
+    },
+    {
+      "code": 21012,
+      "gameId": 51,
+      "character": "Alice",
+      "name": "Wear My Heart on My Sword",
+      "imageUrl": "https://drive.google.com/uc?id=1ATXF7MTCabDwlwFHaRYyl4AHj7RFdY_1",
+      "rarity": 2,
+      "maxLevel": 35
+    },
+    {
+      "code": 21013,
+      "gameId": 60,
+      "character": "Asuna",
+      "name": "Romantic Date",
+      "imageUrl": "https://drive.google.com/uc?id=12oQIvtmQvcDofj5wcYMXNqPP1SHBIBDO",
+      "rarity": 2,
+      "maxLevel": 35
+    },
+    {
+      "code": 21014,
+      "gameId": 61,
+      "character": "Lisbeth",
+      "name": "Blacksmith's Gaze",
+      "imageUrl": "https://drive.google.com/uc?id=19mgb5KZhQrgPmctboHcy7hoPfNY4mBp4",
+      "rarity": 2,
+      "maxLevel": 35
+    },
+    {
+      "code": 21015,
+      "gameId": 76,
+      "character": "",
+      "name": "Heartfelt Blow",
+      "imageUrl": "https://drive.google.com/uc?id=17sqfkam9UEXv-Z58K1Tx9-wEfgywiqXe",
+      "rarity": 2,
+      "maxLevel": 35
+    },
+    {
+      "code": 21016,
+      "gameId": 77,
+      "character": "Eugeo",
+      "name": "Eternally Close Partner",
+      "imageUrl": "https://drive.google.com/uc?id=1Wf3lLAd2lB3hIVRl1c6MbOr_9lXXNGA7",
+      "rarity": 2,
+      "maxLevel": 35
+    },
+    {
+      "code": 21017,
+      "gameId": 72,
+      "character": "Silica",
+      "name": "Budding Bravery",
+      "imageUrl": "https://drive.google.com/uc?id=1je2RoOFy1kSTzhUpKgFPSsHN-AbXpL2V",
+      "rarity": 2,
+      "maxLevel": 35
+    },
+    {
+      "code": 22001,
+      "gameId": 19,
+      "character": "Kirito",
+      "name": "Rest of Relief",
+      "imageUrl": "https://drive.google.com/uc?id=1yfsX9ZZeBmbIeo9xkUy6z-_YNoLo2M_p",
+      "rarity": 2,
+      "maxLevel": 35
+    },
+    {
+      "code": 22002,
+      "gameId": 21,
+      "character": "Alice",
+      "name": "Proud Knight",
+      "imageUrl": "https://drive.google.com/uc?id=1UAPGTZUVmOnrd82XvBRvhujRhGZv62Rm",
+      "rarity": 2,
+      "maxLevel": 35
+    },
+    {
+      "code": 22003,
+      "gameId": 24,
+      "character": "Silica",
+      "name": "Uneventful Days",
+      "imageUrl": "https://drive.google.com/uc?id=1tz4KYC4mVQ5ekA_QVO6gvQZh_lOhhxrk",
+      "rarity": 2,
+      "maxLevel": 35
+    },
+    {
+      "code": 22004,
+      "gameId": 30,
+      "character": "Llenn",
+      "name": "Monocle View",
+      "imageUrl": "https://drive.google.com/uc?id=14c1fnhH17dURfWCzB9cJr-vIfgaOh8It",
+      "rarity": 2,
+      "maxLevel": 35
+    },
+    {
+      "code": 22005,
+      "gameId": 33,
+      "character": "",
+      "name": "An Epic Concert!",
+      "imageUrl": "https://drive.google.com/uc?id=1jySzi3ljwLTg4fGNgwAIGAYoXKHRSdIr",
+      "rarity": 2,
+      "maxLevel": 35
+    },
+    {
+      "code": 22006,
+      "gameId": 34,
+      "character": "Agil",
+      "name": "Unyielding Shield",
+      "imageUrl": "https://drive.google.com/uc?id=1K7fgWZVbBjOHXOCwY2WviH3UieUrCLVa",
+      "rarity": 2,
+      "maxLevel": 35
+    },
+    {
+      "code": 22007,
+      "gameId": 39,
+      "character": "",
+      "name": "Snacking Maiden",
+      "imageUrl": "https://drive.google.com/uc?id=1uz_0OX3Njwm5GSEK2p0Kq6QWmex76chq",
+      "rarity": 2,
+      "maxLevel": 35
+    },
+    {
+      "code": 22008,
+      "gameId": 43,
+      "character": "",
+      "name": "Bonded Knights",
+      "imageUrl": "https://drive.google.com/uc?id=1cWBXBRpMeCCXu2xMjg7Y5aB1gMYP3iEb",
+      "rarity": 2,
+      "maxLevel": 35
+    },
+    {
+      "code": 22009,
+      "gameId": 44,
+      "character": "",
+      "name": "Shy Youth",
+      "imageUrl": "https://drive.google.com/uc?id=1cTPxqLFwNxj2WA2XRj3y7p0ECD7ZFeGY",
+      "rarity": 2,
+      "maxLevel": 35
+    },
+    {
+      "code": 22010,
+      "gameId": 45,
+      "character": "",
+      "name": "Elite Disciple's Merit",
+      "imageUrl": "https://drive.google.com/uc?id=1xzEupR5ZUnI7jXQaev1htzeRP2vF1ORO",
+      "rarity": 2,
+      "maxLevel": 35
+    },
+    {
+      "code": 22011,
+      "gameId": 62,
+      "character": "Kirito",
+      "name": "Favorite Sandwich",
+      "imageUrl": "https://drive.google.com/uc?id=1dxe-LYZYXvbbvocjupMgqz2EhsMvI4BX",
+      "rarity": 2,
+      "maxLevel": 35
+    },
+    {
+      "code": 22012,
+      "gameId": 63,
+      "character": "",
+      "name": "Impatient Maiden",
+      "imageUrl": "https://drive.google.com/uc?id=1ga8ZvmEwqpeXbwDpNcwqXeThBQyjNQcb",
+      "rarity": 2,
+      "maxLevel": 35
+    },
+    {
+      "code": 22013,
+      "gameId": 64,
+      "character": "",
+      "name": "Fruitful Day of Rest",
+      "imageUrl": "https://drive.google.com/uc?id=1HgvaeRe6zJQkoLKAyX2TYke9tlGdU_MW",
+      "rarity": 2,
+      "maxLevel": 35
+    },
+    {
+      "code": 22014,
+      "gameId": 65,
+      "character": "",
+      "name": "I've Got Your Back!",
+      "imageUrl": "https://drive.google.com/uc?id=1TcCZI0DRspdocDZiawOgSMwOe3xSVG5j",
+      "rarity": 2,
+      "maxLevel": 35
+    },
+    {
+      "code": 22015,
+      "gameId": 73,
+      "character": "Leafa",
+      "name": "Encounter With a Sylph",
+      "imageUrl": "https://drive.google.com/uc?id=1J0QnALFspPUY4zWNe4XILjmGjSLYYDtj",
+      "rarity": 2,
+      "maxLevel": 35
+    },
+    {
+      "code": 22016,
+      "gameId": 74,
+      "character": "Layla",
+      "name": "Post-Battle Breather",
+      "imageUrl": "https://drive.google.com/uc?id=12X3LzWvlwi5oG3qSGr-noWFaARspiGE3",
+      "rarity": 2,
+      "maxLevel": 35
+    },
+    {
+      "code": 23001,
+      "gameId": 47,
+      "character": "",
+      "name": "Enemy Encounter",
+      "imageUrl": "https://drive.google.com/uc?id=1UYnQvGfpaleraGTblodCO_dXbs5nbnDu",
+      "rarity": 2,
+      "maxLevel": 35
+    },
+    {
+      "code": 23002,
+      "gameId": 49,
+      "character": "Kirito",
+      "name": "Infamous Dual-Wielder",
+      "imageUrl": "https://drive.google.com/uc?id=1I2l3JWuHlh_Tjt-_57UGBH_PYhWFbkD7",
+      "rarity": 2,
+      "maxLevel": 35
+    },
+    {
+      "code": 23003,
+      "gameId": 50,
+      "character": "Asuna",
+      "name": "Dissatisfied Gaze",
+      "imageUrl": "https://drive.google.com/uc?id=1HlCKYNiqN8SQpI9S43ukiPl0MvHwvzWj",
+      "rarity": 2,
+      "maxLevel": 35
+    },
+    {
+      "code": 23004,
+      "gameId": 75,
+      "character": "Llenn",
+      "name": "With My Beloved Gun",
+      "imageUrl": "https://drive.google.com/uc?id=1jSHM9lyiL31j33O-lfiGCyxPr9i3Fyuw",
+      "rarity": 2,
+      "maxLevel": 35
+    },
+    {
+      "code": 24001,
+      "gameId": 20,
+      "character": "Asuna",
+      "name": "Eye's View",
+      "imageUrl": "https://drive.google.com/uc?id=1D4hvd_BsyLtFHTQJc4watpLLAASJ2j2P",
+      "rarity": 2,
+      "maxLevel": 35
+    },
+    {
+      "code": 24002,
+      "gameId": 23,
+      "character": "Sinon",
+      "name": "Maiden's Battle Plan",
+      "imageUrl": "https://drive.google.com/uc?id=1iJeYjuwVv-jhR9kLYsPZaZl0eSHjN9P9",
+      "rarity": 2,
+      "maxLevel": 35
+    },
+    {
+      "code": 24003,
+      "gameId": 28,
+      "character": "Yuuki",
+      "name": "Bewitching Pose",
+      "imageUrl": "https://drive.google.com/uc?id=1dBfjKzb1Uve9hA_rv9YHGHLnwi5cUfWj",
+      "rarity": 2,
+      "maxLevel": 35
+    },
+    {
+      "code": 24004,
+      "gameId": 29,
+      "character": "Asuna",
+      "name": "Sudden Blow",
+      "imageUrl": "https://drive.google.com/uc?id=1DzfR1Z2vz2Ddt0Fl-uYZ_GMPiNcB22s-",
+      "rarity": 2,
+      "maxLevel": 35
+    },
+    {
+      "code": 24005,
+      "gameId": 31,
+      "character": "",
+      "name": "Heartfelt Training",
+      "imageUrl": "https://drive.google.com/uc?id=1HIR3JfsXmuHGYoJkdqH3ekPaMPJme_P1",
+      "rarity": 2,
+      "maxLevel": 35
+    },
+    {
+      "code": 24006,
+      "gameId": 32,
+      "character": "",
+      "name": "To Protect My Beloved",
+      "imageUrl": "https://drive.google.com/uc?id=1a8hgODTdBgmvg0oTDGTuXzYznZ_o4e_d",
+      "rarity": 2,
+      "maxLevel": 35
+    },
+    {
+      "code": 24007,
+      "gameId": 48,
+      "character": "",
+      "name": "Inspirational Courage",
+      "imageUrl": "https://drive.google.com/uc?id=1Wq3lR9j1e4M4IzxXP4TE2ZepU_xJwBsb",
+      "rarity": 2,
+      "maxLevel": 35
+    },
+    {
+      "code": 24008,
+      "gameId": 52,
+      "character": "Sinon",
+      "name": "A Past to Overcome",
+      "imageUrl": "https://drive.google.com/uc?id=1FiM0__Vv0TBnII-8ijkOJ9hTPHrcYmpA",
+      "rarity": 2,
+      "maxLevel": 35
+    },
+    {
+      "code": 30001,
+      "gameId": 57,
+      "character": "",
+      "name": "Rebel Confrontation",
+      "imageUrl": "https://drive.google.com/uc?id=1EGLlPEpegfxxRLhhrA2CP6AWyZasFvNv",
+      "rarity": 3,
+      "maxLevel": 45
+    },
+    {
+      "code": 30002,
+      "gameId": 70,
+      "character": "",
+      "name": "Perfect Stage",
+      "imageUrl": "https://drive.google.com/uc?id=1hJErmK9J7ySCMR86IZJwDYlt0yUj3Ouc",
+      "rarity": 3,
+      "maxLevel": 45
+    },
+    {
+      "code": 31001,
+      "gameId": 14,
+      "character": "Asuna",
+      "name": "Readied Blue Blade",
+      "imageUrl": "https://drive.google.com/uc?id=1S9lf1QA8N1Kbhd_gyRA5QqkQniF432vb",
+      "rarity": 3,
+      "maxLevel": 45
+    },
+    {
+      "code": 31002,
+      "gameId": 1,
+      "character": "Kirito",
+      "name": "Hero In Full Flight",
+      "imageUrl": "https://drive.google.com/uc?id=16whUzBtcBGjxEt-s6JXsFh51HSm6RXW6",
+      "rarity": 3,
+      "maxLevel": 45
+    },
+    {
+      "code": 31003,
+      "gameId": 9,
+      "character": "Kirito",
+      "name": "Signal of a Counterattack",
+      "imageUrl": "https://drive.google.com/uc?id=10cEG84_r0Ntwh2_XoIr7FzS8Tu1wUGae",
+      "rarity": 3,
+      "maxLevel": 45
+    },
+    {
+      "code": 31004,
+      "gameId": 11,
+      "character": "Alice",
+      "name": "War Command",
+      "imageUrl": "https://drive.google.com/uc?id=10Kj0RWvNOsi5--SzhxvuchyDIvq00PR8",
+      "rarity": 3,
+      "maxLevel": 45
+    },
+    {
+      "code": 31005,
+      "gameId": 17,
+      "character": "Silica",
+      "name": "Crossing Swords",
+      "imageUrl": "https://drive.google.com/uc?id=1W1ZmSDITyUneWPZsMr_HngMqDGuzLtcM",
+      "rarity": 3,
+      "maxLevel": 45
+    },
+    {
+      "code": 31006,
+      "gameId": 56,
+      "character": "Yuuki",
+      "name": "The Absolute Sword's Strength",
+      "imageUrl": "https://drive.google.com/uc?id=1Tsq1e4fxoaF_iVr_gfqJBq_HzRkIM75P",
+      "rarity": 3,
+      "maxLevel": 45
+    },
+    {
+      "code": 31007,
+      "gameId": 59,
+      "character": "",
+      "name": "Bearer of the Guild",
+      "imageUrl": "https://drive.google.com/uc?id=1DCXqCULbqQgSgVn9VWvaVSxMARAEwQ1n",
+      "rarity": 3,
+      "maxLevel": 45
+    },
+    {
+      "code": 32001,
+      "gameId": 10,
+      "character": "Asuna",
+      "name": "Blissful Lunch",
+      "imageUrl": "https://drive.google.com/uc?id=1t3Bc4yF58TbxzZqasHgFZWn9oPfK9J9n",
+      "rarity": 3,
+      "maxLevel": 45
+    },
+    {
+      "code": 32002,
+      "gameId": 16,
+      "character": "Leafa",
+      "name": "Veil of Wind",
+      "imageUrl": "https://drive.google.com/uc?id=1SD77HweHKV1wNhZ3vM7NtOB6fyFMpGce",
+      "rarity": 3,
+      "maxLevel": 45
+    },
+    {
+      "code": 32004,
+      "gameId": 12,
+      "character": "Eugeo",
+      "name": "Crucial Battle",
+      "imageUrl": "https://drive.google.com/uc?id=1JWvXdHNIZhtM2YTe7CLVPsuh7ZvoQj3f",
+      "rarity": 3,
+      "maxLevel": 45
+    },
+    {
+      "code": 32005,
+      "gameId": 13,
+      "character": "Sinon",
+      "name": "Gaze of Discontent",
+      "imageUrl": "https://drive.google.com/uc?id=1aUJHMKOeHpwBh1z8730YvC68BmEh_71I",
+      "rarity": 3,
+      "maxLevel": 45
+    },
+    {
+      "code": 32006,
+      "gameId": 15,
+      "character": "Lisbeth",
+      "name": "Blacksmith's Hammer",
+      "imageUrl": "https://drive.google.com/uc?id=1CQD2FypkUtqmTzIGogX1QVs7pbKUU-wT",
+      "rarity": 3,
+      "maxLevel": 45
+    },
+    {
+      "code": 32007,
+      "gameId": 18,
+      "character": "Layla",
+      "name": "Sharp Intuition",
+      "imageUrl": "https://drive.google.com/uc?id=1DlT3YkY2_lvw7lbcoxzihCDwBS5PHCAF",
+      "rarity": 3,
+      "maxLevel": 45
+    },
+    {
+      "code": 32008,
+      "gameId": 58,
+      "character": "",
+      "name": "For My Beloved Mentor",
+      "imageUrl": "https://drive.google.com/uc?id=1KfYd2V4LdkHwl1hO-rmKyP8xPyjlCRDa",
+      "rarity": 3,
+      "maxLevel": 45
+    },
+    {
+      "code": 32009,
+      "gameId": 69,
+      "character": "Asuna",
+      "name": "Encircled in Flowers",
+      "imageUrl": "https://drive.google.com/uc?id=1AmaaMK0L2io1kPokiUawDslZ_z2npt2w",
+      "rarity": 3,
+      "maxLevel": 45
+    },
+    {
+      "code": 34001,
+      "gameId": 68,
+      "character": "",
+      "name": "Say It With Flowers",
+      "imageUrl": "https://drive.google.com/uc?id=1Ti0ZHoUACKCfI9TsxbhLEykwm09EPqR8",
+      "rarity": 3,
+      "maxLevel": 45
+    },
+    {
+      "code": 34002,
+      "gameId": 71,
+      "character": "Agil",
+      "name": "Merchand of Algade",
+      "imageUrl": "https://drive.google.com/uc?id=1MM2VdpsjsKhaJ74XN4oFK0QWRcMcIyem",
+      "rarity": 3,
+      "maxLevel": 45
+    },
+    {
+      "code": 41000,
+      "gameId": 93,
+      "character": "Eugeo",
+      "name": "Battledore Genius",
+      "imageUrl": "https://drive.google.com/uc?id=1_s6RQFCtFb8sc6lp-P-Gw1S9WjzlzbqH",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 41001,
+      "gameId": 4,
+      "character": "Kirito",
+      "name": "Second coming of the Hero",
+      "imageUrl": "https://drive.google.com/uc?id=1bffR8b0Oiq2viyNp5hunJ-9iFjt6YwRj",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 41002,
+      "gameId": 5,
+      "character": "Asuna",
+      "name": "Flash challenge",
+      "imageUrl": "https://drive.google.com/uc?id=1U8p-sCkrOGuQ1aioU0Q_RHdkAxWNlGu1",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 41003,
+      "gameId": 67,
+      "character": "Eugeo",
+      "name": "Blue Rose Memories",
+      "imageUrl": "https://drive.google.com/uc?id=1tlcDxYVdcCc18h6gmIIkw7GLCu-7odlH",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 41004,
+      "gameId": 84,
+      "character": "Asuna",
+      "name": "Governor of Magic Supreme",
+      "imageUrl": "https://drive.google.com/uc?id=1GXEQh1SBYY4TvU_0raL_3GJQYV9zyMId",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 41005,
+      "gameId": 8,
+      "character": "Lisbeth",
+      "name": "Rare Item Hunter",
+      "imageUrl": "https://drive.google.com/uc?id=1IZxiFfPKZGnurXzZ-dqca7xOaSQ3Ao_m",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 41006,
+      "gameId": 7,
+      "character": "Leafa",
+      "name": "Rematch Contemplations",
+      "imageUrl": "https://drive.google.com/uc?id=1Lm2hqiVKK9vciQxZKn0sJHdgL37KalwQ",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 41007,
+      "gameId": 54,
+      "character": "Kirito",
+      "name": "Decisive Strike",
+      "imageUrl": "https://drive.google.com/uc?id=1ErH9R2nr5BVAMCWReA1FlvmHjyCr3ZQO",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 41008,
+      "gameId": 2,
+      "character": "Asuna",
+      "name": "The Flash's Will",
+      "imageUrl": "https://drive.google.com/uc?id=177_BNNFFc4gyBNjXKOc7wqDBNBc-ajfs",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 41009,
+      "gameId": 80,
+      "character": "Mito",
+      "name": "Bond of Friendship",
+      "imageUrl": "https://drive.google.com/uc?id=1nV4SBcctoDUy2eSHuV8Mh3YsLFh-kbZg",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 41010,
+      "gameId": 83,
+      "character": "Yuuki",
+      "name": "Heartfelt Attack",
+      "imageUrl": "https://drive.google.com/uc?id=1ATAkjMq3pwTHa_EtakNKe_U191Da4U7i",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 41012,
+      "gameId": 88,
+      "character": "Kirito",
+      "name": "Moon's Bewitchment",
+      "imageUrl": "https://drive.google.com/uc?id=1FLunbPN0HDFL8pE5cXWto_vL4ZjUWKsL",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 41013,
+      "gameId": 90,
+      "character": "Alice",
+      "name": "New Year's Wish",
+      "imageUrl": "https://drive.google.com/uc?id=1pEvqnZyD_Aq-f0nABTyGnvHQdZFSIGQF",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 41014,
+      "gameId": 91,
+      "character": "Asuna",
+      "name": "New Year's Feeling",
+      "imageUrl": "https://drive.google.com/uc?id=1b6JMwadx1-71wZHct6w6lHRdGhrk88me",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 41015,
+      "gameId": 95,
+      "character": "Asuna",
+      "name": "Dancing Sword of the Princess",
+      "imageUrl": "https://drive.google.com/uc?id=1Mj4Jh_RySAwi0IiVFtLzzSFFEid3im83",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 41017,
+      "gameId": 107,
+      "character": "",
+      "name": "Dual Bladed Cloaked in Shadow",
+      "imageUrl": "https://drive.google.com/uc?id=1yc_mLmHo6x8AGZJhftX-iujmrwx2h8_n",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 41018,
+      "gameId": 108,
+      "character": "Sinon",
+      "name": "Sharp Shooter",
+      "imageUrl": "https://drive.google.com/uc?id=15dj8bq8_cBeFsw20LsknTdkcIKuxtR_4",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 41019,
+      "gameId": 110,
+      "character": "Asuna",
+      "name": "First Sounds of Spring",
+      "imageUrl": "https://drive.google.com/uc?id=12OrGqoIuN7yyPfbjo0TnchQxoP5QYmGA",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 41020,
+      "gameId": 111,
+      "character": "Yuuki",
+      "name": "Speelbound by a Violet Blossom",
+      "imageUrl": "https://drive.google.com/uc?id=1dw8FsOWbXlbon3J2km8jS0adVmX2bmPX",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 41021,
+      "gameId": 121,
+      "character": "Alice",
+      "name": "Blessings to Osmanthus",
+      "imageUrl": "https://drive.google.com/uc?id=1fb0GYp6Xsh2AcRxXcCSPymKqhktUMpdJ",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 41022,
+      "gameId": 122,
+      "character": "Eugeo",
+      "name": "Blessings to the Blue Rose",
+      "imageUrl": "https://drive.google.com/uc?id=1haGY4R-npV5SC-1n9XhtajUqUJmQfxam",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 41023,
+      "gameId": 125,
+      "character": "Leafa",
+      "name": "[Hurricane Dancer] Challenge",
+      "imageUrl": "https://drive.google.com/uc?id=175cLLLpj8WAwIi3vS_gReBwfE5MnJtS7",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 41024,
+      "gameId": 126,
+      "character": "Leafa",
+      "name": "Birthday Celebrations",
+      "imageUrl": "https://drive.google.com/uc?id=1-_9m7-FwcHZDcaW_csft87gxVUX4Y9-g",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 41025,
+      "gameId": 129,
+      "character": "Layla",
+      "name": "[Red Lotus' Fighting Spirit] Challenge",
+      "imageUrl": "https://drive.google.com/uc?id=1xQ7RqZFhij_rcuEbBafih84Z4mBraX5G",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 41026,
+      "gameId": 131,
+      "character": "",
+      "name": "[Noble Will] Challenge",
+      "imageUrl": "https://drive.google.com/uc?id=1uf6ObmyaBvFpeJ7VUREsp6W_FhxF7lSO",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 41027,
+      "gameId": 133,
+      "character": "Yuuki",
+      "name": "[Supreme Absolute Sword] Challenge",
+      "imageUrl": "https://drive.google.com/uc?id=1FcvVO9ujFiIztFAR8dqzKbzHAh8EwOpu",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 41028,
+      "gameId": 135,
+      "character": "Layla",
+      "name": "Decisive Victory",
+      "imageUrl": "https://drive.google.com/uc?id=1SOVWlw9fbribPD-FNm0LkSsX0f89mIJr",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 41029,
+      "gameId": 140,
+      "character": "Leafa",
+      "name": "Ability 41029",
+      "imageUrl": "https://drive.google.com/uc?id=16hWqyvP4_Ekt1Hs5e122bM905IwaiZpo",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 41030,
+      "gameId": 142,
+      "character": "Eugeo",
+      "name": "Blue Rose Bouquet",
+      "imageUrl": "https://drive.google.com/uc?id=1n5VVHesJTGmtAbPCTFZAbzCPB2WFeBQS",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 41031,
+      "gameId": 144,
+      "character": "Leafa",
+      "name": "Fairy's Repose",
+      "imageUrl": "https://drive.google.com/uc?id=1thsuQaHeKat4I2pXfbuv5g8KyCi75qZv",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 41032,
+      "gameId": 146,
+      "character": "",
+      "name": "Sand-Swept Battleground",
+      "imageUrl": "https://drive.google.com/uc?id=1Jj33waEGu9LGLijpbQOVuG4fNrMShWFY",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 41033,
+      "gameId": 147,
+      "character": "",
+      "name": "My Sweet Prison",
+      "imageUrl": "https://drive.google.com/uc?id=12h_wn2pfaq-tKJAajpe7CGSt9YV-g8Rt",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 41034,
+      "gameId": 148,
+      "character": "",
+      "name": "Sneaky Taste",
+      "imageUrl": "https://drive.google.com/uc?id=1UMe663D2bsGx6H0I_GeadQDlPjJcS4lu",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 41035,
+      "gameId": 152,
+      "character": "Asuna",
+      "name": "Mesmerizing Vacation",
+      "imageUrl": "https://drive.google.com/uc?id=1vjoQPyGhYuj3bfAajzKYkbCesnJdtadd",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 41036,
+      "gameId": 153,
+      "character": "Lisbeth",
+      "name": "Summertime Splash",
+      "imageUrl": "https://drive.google.com/uc?id=1UQijjMWtyavcd4ZXdYXraLIGIIIFWVKz",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 41037,
+      "gameId": 157,
+      "character": "",
+      "name": "Let's Take a Picture!",
+      "imageUrl": "https://drive.google.com/uc?id=1nmGTzzVPOY1rUzmO4A4LTbgjafhEulv3",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 41038,
+      "gameId": 158,
+      "character": "",
+      "name": "Strike a Pose!",
+      "imageUrl": "https://drive.google.com/uc?id=1UW4kx24GQClCMWnRrt8-F9gu9452QhIx",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 41039,
+      "gameId": 173,
+      "character": "",
+      "name": "Warm Wishes",
+      "imageUrl": "https://drive.google.com/uc?id=1_xWz7VOegcba8L56H89CDQQhOibzIZka",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 41040,
+      "gameId": 175,
+      "character": "Eydis",
+      "name": "The Glow of Victory",
+      "imageUrl": "https://drive.google.com/uc?id=1Bgn3P9JmbhBM856NkfKPohutegrcitxP",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 41043,
+      "gameId": 163,
+      "character": "",
+      "name": "Seasoned Comrades (Side A)",
+      "imageUrl": "https://drive.google.com/uc?id=1cogIMeqkBBq2OD7OfAuJzwZKt9WFlWC5",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 41044,
+      "gameId": 164,
+      "character": "",
+      "name": "Seasoned Comrades (Side B)",
+      "imageUrl": "https://drive.google.com/uc?id=1OJjn58ujiW0az6BTHdU4AHSNsGNnCPbC",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 41045,
+      "gameId": 161,
+      "character": "Kirito",
+      "name": "The Hero's Return",
+      "imageUrl": "https://drive.google.com/uc?id=1Pz_pFUjeKsCgPcuf4yfgw-wEYhSie8CN",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 41047,
+      "gameId": 167,
+      "character": "Mito",
+      "name": "Party Preparations",
+      "imageUrl": "https://drive.google.com/uc?id=1h4DwR2_AgQpbkjebr8oqEV_Jpk_BNth6",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 41048,
+      "gameId": 180,
+      "character": "Sinon",
+      "name": "February Rendezvous",
+      "imageUrl": "https://drive.google.com/uc?id=1OWSrkeRM8Mtms2Oq1MDSGu6Q04TXacgy",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 41049,
+      "gameId": 186,
+      "character": "Asuna",
+      "name": "\"Sing with me\"",
+      "imageUrl": "https://drive.google.com/uc?id=1Lm-MJPU9tPIdA_G-dEi5XbMiUNMTDSpF",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 41050,
+      "gameId": 190,
+      "character": "Eugeo",
+      "name": "A Gift for You",
+      "imageUrl": "https://drive.google.com/uc?id=1GbdWylncDzdEqb_QuVKTXvK8afRxtHs1",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 41051,
+      "gameId": 198,
+      "character": "Lisbeth",
+      "name": "Springtime School Road",
+      "imageUrl": "https://drive.google.com/uc?id=1Y47bjdRQ0YsA41GOoi12aqDjTxvShgIu",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 41052,
+      "gameId": 210,
+      "character": "Leafa",
+      "name": "Earth God's Mercy",
+      "imageUrl": "https://drive.google.com/uc?id=1DuINtRlIGoyd5Gx2nGHLYTnzdAYr5caE",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 41053,
+      "gameId": 227,
+      "character": "Mito",
+      "name": "School Festival Prince",
+      "imageUrl": "https://drive.google.com/uc?id=1ibcjZRtGV5w1neRAzb3kIQvI6pk_erWf",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 42001,
+      "gameId": 55,
+      "character": "Sinon",
+      "name": "Decision at Dusk",
+      "imageUrl": "https://drive.google.com/uc?id=1U_XTC1tUk-mgu36_IKaOQ2SeiZKv6Xrf",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 42002,
+      "gameId": 6,
+      "character": "Silica",
+      "name": "Fearless Maiden",
+      "imageUrl": "https://drive.google.com/uc?id=1axpaIU0xIrB89hmbHIuzRin93OFSA5f-",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 42003,
+      "gameId": 79,
+      "character": "Kirito",
+      "name": "Dual-Wielder's Sixteen Strikes",
+      "imageUrl": "https://drive.google.com/uc?id=1F8B_XrnFSicWoD6mIZX9baVHA0WeZH0d",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 42004,
+      "gameId": 86,
+      "character": "Asuna",
+      "name": "Holy Night's Dessert",
+      "imageUrl": "https://drive.google.com/uc?id=1ly71DRhMAstmIM2--XY-IrMNarT8sQqD",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 42005,
+      "gameId": 87,
+      "character": "Alice",
+      "name": "Snowy Santa's Present",
+      "imageUrl": "https://drive.google.com/uc?id=1zt_i5TPX0A1GtmRzktRSAdGPPhy6HuPA",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 42006,
+      "gameId": 92,
+      "character": "",
+      "name": "Together at the Shrine",
+      "imageUrl": "https://drive.google.com/uc?id=1PLnf5PsZbvF85SB2Hz0AQHlovU8WbB8u",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 42007,
+      "gameId": 94,
+      "character": "Kirito",
+      "name": "Black Samurai's Cleave",
+      "imageUrl": "https://drive.google.com/uc?id=1BUBxoRL3EdtwGdhOl5ztu1b0Ut58q4xH",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 42008,
+      "gameId": 105,
+      "character": "Lisbeth",
+      "name": "Heart-Stopping Make-Up!",
+      "imageUrl": "https://drive.google.com/uc?id=1aFgJiT3w1YCMn3CthJfra2U_yY9tYauq",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 42009,
+      "gameId": 112,
+      "character": "Sinon",
+      "name": "Fleeting Moment",
+      "imageUrl": "https://drive.google.com/uc?id=1MrOPB3IkebIKEKeCyMIt-LOzPAum2NXM",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 42010,
+      "gameId": 115,
+      "character": "",
+      "name": "Rule Over All",
+      "imageUrl": "https://drive.google.com/uc?id=1gwcdfDrMG7GjrB58JJsA5jMDxg-alMmA",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 42011,
+      "gameId": 128,
+      "character": "Sinon",
+      "name": "Romantic Invitation",
+      "imageUrl": "https://drive.google.com/uc?id=1QF2Wp2U6CfshJKkkKlsVHck9qP0tMw9u",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 42012,
+      "gameId": 130,
+      "character": "",
+      "name": "Party Time",
+      "imageUrl": "https://drive.google.com/uc?id=1GD3s7O7wnKNzIS3SPUkvRsLZbo4m1vdq",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 42013,
+      "gameId": 162,
+      "character": "Mito",
+      "name": "Destroyer of Destiny",
+      "imageUrl": "https://drive.google.com/uc?id=1h9EqzdICwJZiF2GflnhqjkHRMqEMWAlN",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 42014,
+      "gameId": 138,
+      "character": "Yuuki",
+      "name": "Memorial Birthday",
+      "imageUrl": "https://drive.google.com/uc?id=1VfE0eiPUgP4jUpEvY6MPvNXS3EXgiQ_K",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 42015,
+      "gameId": 141,
+      "character": "Yuuki",
+      "name": "Best Day Ever",
+      "imageUrl": "https://drive.google.com/uc?id=1e7ioFKELJbjP5ZGhDpLawRhIUxELYrOo",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 42016,
+      "gameId": 143,
+      "character": "Argo",
+      "name": "Antique Birthday",
+      "imageUrl": "https://drive.google.com/uc?id=12-oa-wW6ruURlCjTaJiK1l8VIt1AsVGG",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 42017,
+      "gameId": 154,
+      "character": "",
+      "name": "An Epic Birthday Celebration!",
+      "imageUrl": "https://drive.google.com/uc?id=1cLpoY__LsNOOkYWCcUB-K9ZE9nRshRV3",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 42018,
+      "gameId": 155,
+      "character": "",
+      "name": "Happy Sweet Pancake",
+      "imageUrl": "https://drive.google.com/uc?id=1pTj3kffsq4eQ_FbCaSzce4QO8dD5gC_7",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 42019,
+      "gameId": 160,
+      "character": "",
+      "name": "Soothing Melody",
+      "imageUrl": "https://drive.google.com/uc?id=1QfntTvmrGxMp7f2WBkRcHG-JwM03YTLz",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 42023,
+      "gameId": 165,
+      "character": "Eugeo",
+      "name": "Moment of Happiness",
+      "imageUrl": "https://drive.google.com/uc?id=1DTh--CK1LbEYWIWimL5OX2waflcFXWX_",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 42025,
+      "gameId": 179,
+      "character": "Kirito",
+      "name": "Neon-Lit Promise",
+      "imageUrl": "https://drive.google.com/uc?id=1mG2ilA3gXQzyOLbSh_VVFA9OY1QheIYe",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 42026,
+      "gameId": 168,
+      "character": "Eugeo",
+      "name": "Away from the Party",
+      "imageUrl": "https://drive.google.com/uc?id=18eqOaK59xo1I9_lB2L1D3na_J4CpXhXB",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 42027,
+      "gameId": 188,
+      "character": "Lisbeth",
+      "name": "Short Break at the Workshop",
+      "imageUrl": "https://drive.google.com/uc?id=14zn2jaAV3EsDQJ_NLhZrjJBAX54O6VzT",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 42028,
+      "gameId": 191,
+      "character": "Asuna",
+      "name": "A Dreamlike Moment",
+      "imageUrl": "https://drive.google.com/uc?id=1P9RkQrR7uJ7QkABffnZWOBEXnOcmNAlF",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 42029,
+      "gameId": 192,
+      "character": "Leafa",
+      "name": "A New Day Begins",
+      "imageUrl": "https://drive.google.com/uc?id=1_UqvM6UCzl6Vo0xg8EQyWhI1RPrmMMNT",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 42030,
+      "gameId": 197,
+      "character": "Kirito",
+      "name": "Egg Hunt Champion",
+      "imageUrl": "https://drive.google.com/uc?id=18RJ0qKE82ISdi94CepmMpJVdiJpl5P0H",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 42031,
+      "gameId": 200,
+      "character": "",
+      "name": "Post-Bath Drink",
+      "imageUrl": "https://drive.google.com/uc?id=1uTDajRBCxmyyfSs0xgwZHjfh6HNi5B-y",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 42032,
+      "gameId": 202,
+      "character": "",
+      "name": "Bewitching Audience",
+      "imageUrl": "https://drive.google.com/uc?id=1fy9mi8VamtD6NtiP0aGmO6sH5h5qoerw",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 42033,
+      "gameId": 201,
+      "character": "Alice",
+      "name": "Decisive Smash",
+      "imageUrl": "https://drive.google.com/uc?id=1tV_frgA2rU0mMrbDVu-yufHgqzjVjWof",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 42034,
+      "gameId": 203,
+      "character": "",
+      "name": "[Diva] Challenge",
+      "imageUrl": "https://drive.google.com/uc?id=13sHy3Onsed6VYiyBs4MvMru_3y-D8MJ6",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 42035,
+      "gameId": 206,
+      "character": "Eydis",
+      "name": "[Shadow Knight] Challenge",
+      "imageUrl": "https://drive.google.com/uc?id=1MZs14VoQiyIoXkLSkKqoYqxl8ClOKM0e",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 42036,
+      "gameId": 205,
+      "character": "Kirito",
+      "name": "[Black Gun-Knight] Challenge",
+      "imageUrl": "https://drive.google.com/uc?id=1ysmOpSr47GeFezVjgSKGj49WZwcy0dqL",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 42037,
+      "gameId": 207,
+      "character": "Yuuki",
+      "name": "Around the Campfire",
+      "imageUrl": "https://drive.google.com/uc?id=1hVFNx96gICnml83y34rRHIO_EAPArbL_",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 42038,
+      "gameId": 213,
+      "character": "",
+      "name": "The Bride's Song",
+      "imageUrl": "https://drive.google.com/uc?id=1SS4BHP-Ix3-wthNspjxzaQs8wsGo5_Qi",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 42039,
+      "gameId": 216,
+      "character": "",
+      "name": "Under a Rainbow, After the Rain",
+      "imageUrl": "https://drive.google.com/uc?id=1FJ69MZA8VdxK_3jzjypHgNP51RYEXafl",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 42040,
+      "gameId": 220,
+      "character": "Asuna",
+      "name": "It's a secret.",
+      "imageUrl": "https://drive.google.com/uc?id=10d6uapnxsh0mF81gThy5vY-HJOEGqZ-c",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 42041,
+      "gameId": 224,
+      "character": "Sinon",
+      "name": "A Summer to Remember",
+      "imageUrl": "https://drive.google.com/uc?id=1vu-HHr5IDnlFkoeIpwT1OyZZLv3GYvQQ",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 42042,
+      "gameId": 225,
+      "character": "Leafa",
+      "name": "The Irresistible Shiny Girl",
+      "imageUrl": "https://drive.google.com/uc?id=1SWdXv9XneOP6FQ4JUOGQVH8T82jaXkyK",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 43000,
+      "gameId": 99,
+      "character": "Sinon",
+      "name": "Keep Sniper",
+      "imageUrl": "https://drive.google.com/uc?id=1KMTRxsAlmHEw0O2Govwf7zB08-CHCOsq",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 43001,
+      "gameId": 66,
+      "character": "Alice",
+      "name": "Osmanthus Radiance",
+      "imageUrl": "https://drive.google.com/uc?id=1yGaAwEsPU7vB9XYeZZvXck7aLw3Y2x29",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 43002,
+      "gameId": 3,
+      "character": "Eugeo",
+      "name": "Rookie Integrity Knight",
+      "imageUrl": "https://drive.google.com/uc?id=16PyZRVNhDyLT6An0zoQ6LFP74NQZPocG",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 43003,
+      "gameId": 81,
+      "character": "Asuna",
+      "name": "A Friend's Compassion",
+      "imageUrl": "https://drive.google.com/uc?id=1RBXZvr1SP2H7CSOHxhNAAhHuNiV7L4DE",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 43004,
+      "gameId": 78,
+      "character": "Asuna",
+      "name": "Exquisite Link Attack",
+      "imageUrl": "https://drive.google.com/uc?id=1mGFbaFqzFuaWVahy1rb52KRCwGcjdSAT",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 43005,
+      "gameId": 85,
+      "character": "Kirito",
+      "name": "Unrivalled Hero's Slash",
+      "imageUrl": "https://drive.google.com/uc?id=1sFbcyBOceKoE7b16BZm1VtoI6y5LsPQW",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 43006,
+      "gameId": 217,
+      "character": "",
+      "name": "Sitting by the Window",
+      "imageUrl": "https://drive.google.com/uc?id=1KkVVZMpwmy_WjkmYHTah_kllLsdJc-DF",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 43007,
+      "gameId": 96,
+      "character": "Eugeo",
+      "name": "Moonlit Swashbuckler",
+      "imageUrl": "https://drive.google.com/uc?id=1CGoxSSBJ0D709mK3mSsSmNqROvXFunYL",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 43008,
+      "gameId": 97,
+      "character": "Alice",
+      "name": "Slayer of Cave Guardians",
+      "imageUrl": "https://drive.google.com/uc?id=1vXqzpIklQY2eiA95dk-f1USmX3urn5sF",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 43009,
+      "gameId": 98,
+      "character": "Layla",
+      "name": "Dance of the Dual Blades",
+      "imageUrl": "https://drive.google.com/uc?id=1GOMZFW-pkC4IyFH03WF4YmGP8Y1tILDo",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 43010,
+      "gameId": 100,
+      "character": "Kirito",
+      "name": "Supportive Protector",
+      "imageUrl": "https://drive.google.com/uc?id=14qm50MvmSwFc94jlt9F2UJWXKOCfFuF5",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 43011,
+      "gameId": 103,
+      "character": "Eugeo",
+      "name": "To you, My Beloved",
+      "imageUrl": "https://drive.google.com/uc?id=1Gr7PUxJGAdXJ3Jp-sJYkv4jaJsWlW1zw",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 43012,
+      "gameId": 109,
+      "character": "Lisbeth",
+      "name": "Exciting Vacation",
+      "imageUrl": "https://drive.google.com/uc?id=1ddnXM17opLACNdsOlSErRE_wyyQ0o5fr",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 43013,
+      "gameId": 114,
+      "character": "Eugeo",
+      "name": "Fated Partner",
+      "imageUrl": "https://drive.google.com/uc?id=17NAxZcc9rIXaF6RV-rDXVP-I_w8EOGWS",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 43014,
+      "gameId": 118,
+      "character": "Asuna",
+      "name": "Mito's Hairstyle",
+      "imageUrl": "https://drive.google.com/uc?id=1k7zCcDb0Vu6nq3rr-HAkgt-vay8X1Yk4",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 43015,
+      "gameId": 123,
+      "character": "Silica",
+      "name": "[Caring Dragon Tamer] Challenge",
+      "imageUrl": "https://drive.google.com/uc?id=1gYs5MsShTkAR25vsMdTRxv7C3k_qrCV-",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 43016,
+      "gameId": 124,
+      "character": "Lisbeth",
+      "name": "[Steel Hammer] Challenge",
+      "imageUrl": "https://drive.google.com/uc?id=1htRUJJ7lVJu4ZSTnLxoASQp4lXkvSsOj",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 43017,
+      "gameId": 127,
+      "character": "Llenn",
+      "name": "Surprise Party!",
+      "imageUrl": "https://drive.google.com/uc?id=12NmYbWZ3sC5JQBaIxpbBcxnmXq6Ar1C_",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 43018,
+      "gameId": 132,
+      "character": "Eugeo",
+      "name": "[Sword Prodigy] Challenge",
+      "imageUrl": "https://drive.google.com/uc?id=1tmMpBUYScRrkKToHxzumOROfGdMpY1JP",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 43019,
+      "gameId": 134,
+      "character": "Yuuki",
+      "name": "Victory Toast",
+      "imageUrl": "https://drive.google.com/uc?id=1z9sY8f0-VaBZoW699k_3zVpWrg2smKRG",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 43020,
+      "gameId": 136,
+      "character": "Sinon",
+      "name": "[Surefire Bullet] Challenge",
+      "imageUrl": "https://drive.google.com/uc?id=1Ergro8zRwv8idw4Nguoytidr1HhVr5y8",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 43021,
+      "gameId": 137,
+      "character": "Lisbeth",
+      "name": "Special Birthday Cake",
+      "imageUrl": "https://drive.google.com/uc?id=12_QI9IYKeEWXK6HnIqyI8b1q9p69XO6W",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 43022,
+      "gameId": 156,
+      "character": "Yuuki",
+      "name": "Balmy Day",
+      "imageUrl": "https://drive.google.com/uc?id=1is8H7cW3n7XfxRu6vmBvet4Of4DRbf-t",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 43023,
+      "gameId": 159,
+      "character": "Sinon",
+      "name": "Cerulean Festival",
+      "imageUrl": "https://drive.google.com/uc?id=1VqrfAX1sYeFxLenAbEVd5k2CCC9kOGlG",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 43026,
+      "gameId": 228,
+      "character": "Argo",
+      "name": "The Ship's Bell Rings",
+      "imageUrl": "https://drive.google.com/uc?id=1q4MEuT9AWC6u95pZTI2x2BjP7mLabVJd",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 44000,
+      "gameId": 102,
+      "character": "Sinon",
+      "name": "Strike of Conviction",
+      "imageUrl": "https://drive.google.com/uc?id=12egli2wgndTfh7UQ8iYtdO51PJPKjQCr",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 44001,
+      "gameId": 104,
+      "character": "Alice",
+      "name": "The Apple of My Eye",
+      "imageUrl": "https://drive.google.com/uc?id=16a-WPXoWa4YWGdFwS1zNh1qTKme_pzjb",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 44002,
+      "gameId": 106,
+      "character": "Asuna",
+      "name": "Victory's Bladed Beacon",
+      "imageUrl": "https://drive.google.com/uc?id=1g9Zc8KyYmeqlfZmCSL-IVtZmiMBr_Xct",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 44003,
+      "gameId": 116,
+      "character": "Kirito",
+      "name": "Resting Amidst Nature",
+      "imageUrl": "https://drive.google.com/uc?id=1i3qOhYKAwja6U2jonu-QXkRbJ_pmsdHc",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 44004,
+      "gameId": 117,
+      "character": "Yuuki",
+      "name": "Ambitious Swordsman",
+      "imageUrl": "https://drive.google.com/uc?id=1-k_yEnWciUb_BvJwO1nRCETT5yXmFm5o",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 44005,
+      "gameId": 119,
+      "character": "Alice",
+      "name": "Refreshed by Mother Nature",
+      "imageUrl": "https://drive.google.com/uc?id=1TIpxvta6mzEVnDH_YlaOY8-1xxPxsYi3",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 44006,
+      "gameId": 120,
+      "character": "Layla",
+      "name": "Strange Rumor",
+      "imageUrl": "https://drive.google.com/uc?id=1VJDxcyrf54P4yO4AAKwrl-BxMiFACNhc",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 44007,
+      "gameId": 139,
+      "character": "Silica",
+      "name": "Sunny Road",
+      "imageUrl": "https://drive.google.com/uc?id=1YqRCjS8jtUiTCVnpshccFNPF60jUcHTl",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 44008,
+      "gameId": 145,
+      "character": "Llenn",
+      "name": "Lying in Wait",
+      "imageUrl": "https://drive.google.com/uc?id=1mU-AiZccSLhC9uhRQkRSG_kyG8t9HZlX",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 44009,
+      "gameId": 149,
+      "character": "Silica",
+      "name": "Summer Vacation!",
+      "imageUrl": "https://drive.google.com/uc?id=1p6EKIQHXHKpM1E0CVEMoDuTPkZ4sI62k",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 44010,
+      "gameId": 178,
+      "character": "Llenn",
+      "name": "Faithful Companion",
+      "imageUrl": "https://drive.google.com/uc?id=1j4ExG8k0fRSbbe9AbxweHCOXjGjwm7f5",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 44011,
+      "gameId": 189,
+      "character": "",
+      "name": "Into Town by Steam Locomotive",
+      "imageUrl": "https://drive.google.com/uc?id=13qLME3yd8-trsJjMjMYzjGzwEbEGKD3G",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 44012,
+      "gameId": 187,
+      "character": "Yuuki",
+      "name": "Think You Can Escape From Me?",
+      "imageUrl": "https://drive.google.com/uc?id=1ld5rSUZi-lEnEPK6SZEu47mP8JAmdhfp",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 44013,
+      "gameId": 193,
+      "character": "",
+      "name": "A Bite of Happiness",
+      "imageUrl": "https://drive.google.com/uc?id=1jZKAOG0dL03NfveTBJZgDVhzwmKN0QpT",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 44014,
+      "gameId": 199,
+      "character": "",
+      "name": "Slumbering Strategist",
+      "imageUrl": "https://drive.google.com/uc?id=13ym6FaSifq-WGMHHPNoLOBLfd2qyZq2A",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 44015,
+      "gameId": 212,
+      "character": "Alice",
+      "name": "The Path of Vows",
+      "imageUrl": "https://drive.google.com/uc?id=1CXtAcHdCS0mVRdP-w1e14EOaxuRkBKk4",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 44016,
+      "gameId": 222,
+      "character": "Mito",
+      "name": "Through the Star Festivel Decorations",
+      "imageUrl": "https://drive.google.com/uc?id=1FN1exLtuGtz1zSr0o1H05yZ9PLZTCfle",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 45000,
+      "gameId": 89,
+      "character": "Leafa",
+      "name": "Fight of the Mentor",
+      "imageUrl": "https://drive.google.com/uc?id=1eMzB97jmzLTQ0VOioMw9TAAWDMViSiYd",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 45001,
+      "gameId": 82,
+      "character": "Asuna",
+      "name": "Vague Anxiety",
+      "imageUrl": "https://drive.google.com/uc?id=1vQZ7JOrVD7JXlAfsyuFeCDC4hC2l1W3u",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 45002,
+      "gameId": 101,
+      "character": "Kirito",
+      "name": "Triumphant Photon Sword",
+      "imageUrl": "https://drive.google.com/uc?id=1pysC5gU7BLWTo2XAl973YY0ACMpre25d",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 45003,
+      "gameId": 113,
+      "character": "Kirito",
+      "name": "My Hero",
+      "imageUrl": "https://drive.google.com/uc?id=1ZjfUyLEzN0znmp0IoVH8vpitI9U7KFOy",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 45004,
+      "gameId": 150,
+      "character": "",
+      "name": "Joyous Gift",
+      "imageUrl": "https://drive.google.com/uc?id=1s2jMUBjEt1rQoCpr7-jUNtRe7uU-aaA8",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 45005,
+      "gameId": 151,
+      "character": "Layla",
+      "name": "Midsummer Sparkle",
+      "imageUrl": "https://drive.google.com/uc?id=1J8sHzrluAE-1TXQoyng1ZHXWIOxOPY4E",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 45007,
+      "gameId": 170,
+      "character": "",
+      "name": "How Cute, Mommy!",
+      "imageUrl": "https://drive.google.com/uc?id=1vtz2qI6K-wtBkZ8nXwi7UcqwldZ3HPf9",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 45008,
+      "gameId": 214,
+      "character": "Asuna",
+      "name": "Japanese Sweets Party",
+      "imageUrl": "https://drive.google.com/uc?id=1yka0Ix7Haw8P-LWuKwa5L2ZUmtBH0Vud",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 45009,
+      "gameId": 176,
+      "character": "",
+      "name": "LLENN's so cute!",
+      "imageUrl": "https://drive.google.com/uc?id=1gcj_zS7T7rNGjHk5WUj7bgbqYSBOCIym",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 45010,
+      "gameId": 177,
+      "character": "",
+      "name": "Pito! Are you teasing me?!",
+      "imageUrl": "https://drive.google.com/uc?id=1N2WLtT4Ee6e4AQZuZEM1CD6aloO2K6pU",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 45011,
+      "gameId": 169,
+      "character": "Kirito",
+      "name": "Leave the Decorations to Me!",
+      "imageUrl": "https://drive.google.com/uc?id=1kJMMK0x4VbfI2-z059xC9UaYNcTUDQhz",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 45012,
+      "gameId": 174,
+      "character": "Layla",
+      "name": "Winter Rice Cake Pounding",
+      "imageUrl": "https://drive.google.com/uc?id=1-gUyjSJczTsbXWDFZojYMoEaW9w21Fi4",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 45013,
+      "gameId": 181,
+      "character": "Silica",
+      "name": "Especially For You",
+      "imageUrl": "https://drive.google.com/uc?id=1zBD9S5KUeiMPEq8OiRrCFkaP-VcVM1rN",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 45014,
+      "gameId": 183,
+      "character": "Leafa",
+      "name": "Getting Ready",
+      "imageUrl": "https://drive.google.com/uc?id=1Z0nhIJjiFn9ZfD6sgj-jR1Mlf-7TzxpL",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 45015,
+      "gameId": 194,
+      "character": "Sinon",
+      "name": "Beneath the Starry Sky",
+      "imageUrl": "https://drive.google.com/uc?id=1BGf7IJq6xZfswV4hpcMFN-6pbmRFIfGw",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 45016,
+      "gameId": 195,
+      "character": "Layla",
+      "name": "Inside the Nest",
+      "imageUrl": "https://drive.google.com/uc?id=1SVk837joTxDdqxr2op6dOvOg1yhao60c",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 45017,
+      "gameId": 196,
+      "character": "Sinon",
+      "name": "Pretty Parade",
+      "imageUrl": "https://drive.google.com/uc?id=1SaPZyHt4VZwa0GcmeAmiPnILNP_4LSqt",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 45018,
+      "gameId": 204,
+      "character": "Layla",
+      "name": "Incredible Foreigner",
+      "imageUrl": "https://drive.google.com/uc?id=1XRv-c-3bHsTONT_p2ajk7n1yrykoIqCM",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 45019,
+      "gameId": 209,
+      "character": "Asuna",
+      "name": "Creator's Strike",
+      "imageUrl": "https://drive.google.com/uc?id=1aP_QEUveshp314tIsjESGDxVfIv2VX80",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 45020,
+      "gameId": 211,
+      "character": "",
+      "name": "To a New Beginning",
+      "imageUrl": "https://drive.google.com/uc?id=1baUdONexKGfLkmkcmH5o3LbFUww50PfU",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 45021,
+      "gameId": 218,
+      "character": "Argo",
+      "name": "Cheers to our victory!",
+      "imageUrl": "https://drive.google.com/uc?id=1X_ZhWAENdhNc6WH1mJh3YzaTioQHDScP",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 45022,
+      "gameId": 221,
+      "character": "Kirito",
+      "name": "The Hero Is Here",
+      "imageUrl": "https://drive.google.com/uc?id=1mub0jQE6UhJxegr7C59ag-zYXGO2zHAu",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 45023,
+      "gameId": 230,
+      "name": "Thanking You",
+      "character": "Kirito",
+      "imageUrl": "https://drive.google.com/uc?id=1KwKDN5VVBhpXTsK_5DLg6PzbGmrGw958",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 45024,
+      "gameId": 231,
+      "name": "When the Smile Breaks Through",
+      "character": "Asuna",
+      "imageUrl": "https://drive.google.com/uc?id=1Qbgac_LCBNP62T9RluQaqC8ptGoK_Ycm",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 45025,
+      "gameId": 232,
+      "name": "The Shape of Gratitude",
+      "character": "Layla",
+      "imageUrl": "https://drive.google.com/uc?id=1fxiRzbq2rKL2bde6tKBUcWIcGVZM2r2E",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 46001,
+      "gameId": 171,
+      "character": "Asuna",
+      "name": "Sunrise Sky",
+      "imageUrl": "https://drive.google.com/uc?id=1yVYXoMvO0WXWhMZCIc0nzTtjJFFHycBV",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 46002,
+      "gameId": 172,
+      "character": "",
+      "name": "Singing Shrine Maiden",
+      "imageUrl": "https://drive.google.com/uc?id=10qjMoyspMwMBvxNl7xQtTwxdvR0AwYHi",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 46003,
+      "gameId": 182,
+      "character": "",
+      "name": "Chocolate Seduction",
+      "imageUrl": "https://drive.google.com/uc?id=1Lk06y9eUgA3wmKbORRvuU-0umECQF7yU",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 46004,
+      "gameId": 184,
+      "character": "",
+      "name": "Ultimate Heat!",
+      "imageUrl": "https://drive.google.com/uc?id=1HhpsW5-NDOc7DAb6ATp-GYHNCG1Dbx-y",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 49001,
+      "gameId": 166,
+      "character": "Eugeo",
+      "name": "Comrades in Arms",
+      "imageUrl": "https://drive.google.com/uc?id=1QSQmKgy3wLMizNY6l96Q3rQJgM16c8l0",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 49002,
+      "gameId": 185,
+      "character": "Alice",
+      "name": "Shining Stage",
+      "imageUrl": "https://drive.google.com/uc?id=1Wv5rDv3IViUgKi5BkNltIQGmqvfSLPiv",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 49003,
+      "gameId": 208,
+      "character": "",
+      "name": "Dark God's Descent",
+      "imageUrl": "https://drive.google.com/uc?id=1c1_opFydmrz399IgJK-EyOnp7L-8XikV",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 49004,
+      "gameId": 215,
+      "character": "Leafa",
+      "name": "Pointing Into the Distance",
+      "imageUrl": "https://drive.google.com/uc?id=195QxQXs_i70ubxZ_lZ3QaIfAbfVKA0-6",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 49005,
+      "gameId": 219,
+      "character": "Alice",
+      "name": "A Memory from Long Ago",
+      "imageUrl": "https://drive.google.com/uc?id=1FpFeQpxRn7n56m5hsvklXdf_lQEHfYXi",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 49006,
+      "gameId": 223,
+      "character": "Silica",
+      "name": "Unspoken",
+      "imageUrl": "https://drive.google.com/uc?id=11cgzGYxOW5KwINePdIy96TWNPPZXdFS1",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 49007,
+      "gameId": 226,
+      "character": "",
+      "name": "The Real Joy of Sea Fishing",
+      "imageUrl": "https://drive.google.com/uc?id=1iWUwPu-WNRkm5rud3d_BY2nvW_lE5G4O",
+      "rarity": 4,
+      "maxLevel": 55
+    },
+    {
+      "code": 49008,
+      "gameId": 229,
+      "character": "Kirito",
+      "name": "Splashed with Water",
+      "imageUrl": "https://drive.google.com/uc?id=1q-IdKmid63-wmBf_sSPDuR6jtt8YcidI",
+      "rarity": 4,
+      "maxLevel": 55
+    }
+  ]
+}
