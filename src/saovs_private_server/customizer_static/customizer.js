@@ -219,13 +219,14 @@
     }
 
     const isOwned = state.selectedMode === "owned";
+    const isEditable = !isOwned || item.isEditable !== false;
     const maxLevel = Number(item.maxLevel || 55);
     els.editorImage.classList.remove("hidden");
     els.editorImage.src = item.image || `/customize/ability-image/${item.code}`;
     els.editorCode.textContent = `Code ${item.code} - Game ID ${item.gameId || "-"}`;
     els.editorTitle.textContent = titleFor(item);
     els.editorMeta.textContent = isOwned
-      ? `${item.rarity || "-"} Star - group ${item.groupId} - ${item.copies} owned copies`
+      ? `${item.rarity || "-"} Star - group ${item.groupId} - ${item.copies} owned copies${isEditable ? "" : " - game default"}`
       : `${item.rarity || "-"} Star - Max level ${maxLevel} - ${ownedGroupsForCode(item.code).length} owned groups`;
     els.levelInput.max = String(maxLevel);
     els.levelInput.value = String(isOwned ? item.level : maxLevel);
@@ -235,13 +236,13 @@
     els.copiesInput.value = String(isOwned ? item.copies : 1);
     els.copiesLabel.textContent = isOwned ? "Copies To Edit" : "Copies To Add";
     els.lockedInput.checked = isOwned ? Boolean(item.isLocked) : true;
-    els.saveBtn.textContent = isOwned ? "Apply To Owned" : "Add Copies";
-    els.removeBtn.textContent = "Delete Group";
+    els.saveBtn.textContent = isOwned ? (isEditable ? "Apply To Owned" : "Game Default") : "Add Copies";
+    els.removeBtn.textContent = isEditable ? "Delete Group" : "Locked";
     [els.levelInput, els.potentialInput, els.copiesInput, els.lockedInput, els.saveBtn].forEach(function (input) {
-      input.disabled = false;
+      input.disabled = !isEditable;
     });
-    els.removeBtn.disabled = !isOwned;
-    els.editorMessage.textContent = "";
+    els.removeBtn.disabled = !isOwned || !isEditable;
+    els.editorMessage.textContent = isEditable ? "" : "This group is supplied by the game.";
   }
 
   function renderSummary() {
@@ -249,10 +250,13 @@
     const totalCopies = state.owned.reduce(function (sum, item) {
       return sum + Number(item.copies || 0);
     }, 0);
+    const editableCopies = state.owned.reduce(function (sum, item) {
+      return item.isEditable === false ? sum : sum + Number(item.copies || 0);
+    }, 0);
     els.ownedCount.textContent = String(totalCopies);
     els.copyCount.textContent = String(state.owned.length);
     els.catalogCount.textContent = String(state.catalog.length);
-    els.ownedMeta.textContent = `${state.owned.length} groups / ${copiesByCode.size} codes / ${totalCopies} copies`;
+    els.ownedMeta.textContent = `${state.owned.length} groups / ${copiesByCode.size} codes / ${totalCopies} copies / ${editableCopies} editable`;
   }
 
   function renderOwned() {
@@ -263,18 +267,20 @@
 
     els.ownedList.innerHTML = state.owned.map(function (item) {
       const selected = Number(item.groupId) === state.selectedGroupId && state.selectedMode === "owned" ? " selected" : "";
+      const systemClass = item.isEditable === false ? " system" : "";
+      const badge = item.isEditable === false ? '<span class="system-badge">Default</span>' : "";
       return `
-        <article class="owned-row${selected}" data-mode="owned" data-group-id="${item.groupId}">
+        <article class="owned-row${selected}${systemClass}" data-mode="owned" data-group-id="${item.groupId}">
           <img loading="lazy" src="${escapeHtml(item.image)}" alt="">
           <div class="owned-main">
             <div class="owned-title" title="${escapeHtml(titleFor(item))}">${escapeHtml(titleFor(item))}</div>
-            <div class="owned-sub">Code ${item.code} - Game ID ${escapeHtml(item.gameId || "-")} - Group ${item.groupId}</div>
+            <div class="owned-sub">Code ${item.code} - Game ID ${escapeHtml(item.gameId || "-")} - Group ${item.groupId} ${badge}</div>
           </div>
           <div class="mini-stats">
             <span>L${item.level}</span>
             <span>P${item.potential}</span>
             <span>x${item.copies}</span>
-            <button type="button" data-mode="owned" data-group-id="${item.groupId}">Edit</button>
+            <button type="button" data-mode="owned" data-group-id="${item.groupId}">${item.isEditable === false ? "View" : "Edit"}</button>
           </div>
         </article>`;
     }).join("");
@@ -339,6 +345,10 @@
     }
 
     const isOwned = state.selectedMode === "owned";
+    if (isOwned && item.isEditable === false) {
+      els.editorMessage.textContent = "This group is supplied by the game.";
+      return;
+    }
     const path = isOwned
       ? `/customize/api/ability-groups/${item.groupId}`
       : `/customize/api/abilities/${item.code}`;
@@ -372,6 +382,10 @@
   async function removeSelected() {
     const item = selectedOwnedGroup();
     if (!item) {
+      return;
+    }
+    if (item.isEditable === false) {
+      els.editorMessage.textContent = "This group is supplied by the game.";
       return;
     }
 

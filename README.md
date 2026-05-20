@@ -165,6 +165,11 @@ edit or delete a selected copy group. Changes are stored in SQLite and the
 server rebuilds the per-player `ability/index` payload from that database
 state.
 
+The game also supplies three maxed default copies of each catalog ability from
+`user_list.db`. The customizer stores those defaults as non-editable groups and
+excludes them from generated transfer payloads, so customizer edits are added
+on top without duplicating the game-provided cards.
+
 The ability catalog lives at `content/customizer/ability_catalog.json`. Card
 art is cached on demand into `content/customizer/ability_images/`; that image
 cache is ignored by Git so it can grow locally or on the VPS without bloating

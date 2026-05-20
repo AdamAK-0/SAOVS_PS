@@ -100,7 +100,9 @@ SESSION_ACTIVE_SECONDS = int(os.environ.get("SAOVS_SESSION_ACTIVE_SECONDS", "180
 CUSTOMIZER_SESSION_TTL_SECONDS = int(os.environ.get("SAOVS_CUSTOMIZER_SESSION_TTL_SECONDS", str(30 * 86400)))
 CUSTOMIZER_COOKIE_NAME = os.environ.get("SAOVS_CUSTOMIZER_COOKIE_NAME", "saovs_customizer_session")
 ABILITY_COPY_LIMIT = int(os.environ.get("SAOVS_ABILITY_COPY_LIMIT", "99"))
+DEFAULT_ABILITY_COPY_COUNT = int(os.environ.get("SAOVS_GAME_DEFAULT_ABILITY_COPIES", "3"))
 ABILITY_IMAGE_MAX_BYTES = int(os.environ.get("SAOVS_ABILITY_IMAGE_MAX_BYTES", str(8 * 1024 * 1024)))
+SEED_NEW_USERS_FROM_OFFLINE = os.environ.get("SAOVS_SEED_NEW_USERS_FROM_OFFLINE", "0") == "1"
 PASSWORD_HASH_ITERATIONS = int(os.environ.get("SAOVS_PASSWORD_HASH_ITERATIONS", "180000"))
 EMAIL_CODE_TTL_SECONDS = int(os.environ.get("SAOVS_EMAIL_CODE_TTL_SECONDS", "300"))
 EMAIL_CODE_ATTEMPT_LIMIT = int(os.environ.get("SAOVS_EMAIL_CODE_ATTEMPT_LIMIT", "10"))
@@ -190,7 +192,7 @@ SAOVS_LOCALIZE_DATA_VER = int(os.environ.get("SAOVS_LOCALIZE_DATA_VER", offline_
 SAOVS_ADMIN_TOKEN = os.environ.get("SAOVS_ADMIN_TOKEN", "")
 SAOVS_ADMIN_USERNAME = os.environ.get("SAOVS_ADMIN_USERNAME", "admin")
 SAOVS_ADMIN_PASSWORD = os.environ.get("SAOVS_ADMIN_PASSWORD", "admin")
-SERVE_STATIC_USER_LIST_DB = os.environ.get("SAOVS_SERVE_STATIC_USER_LIST_DB", "0") == "1"
+SERVE_STATIC_USER_LIST_DB = os.environ.get("SAOVS_SERVE_STATIC_USER_LIST_DB", "1") != "0"
 SAOVS_ASSET_HOSTS = {
     host.strip().lower()
     for host in os.environ.get(
@@ -522,6 +524,7 @@ def init_db() -> None:
                 awake_num INTEGER NOT NULL DEFAULT 0,
                 exp INTEGER NOT NULL DEFAULT 0,
                 is_locked INTEGER NOT NULL DEFAULT 0,
+                is_editable INTEGER NOT NULL DEFAULT 1,
                 first_get_at TEXT NOT NULL,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
@@ -552,6 +555,15 @@ def ensure_schema_migrations(conn: sqlite3.Connection) -> None:
     if "password_change_required" not in login_columns:
         conn.execute(
             "ALTER TABLE login_users ADD COLUMN password_change_required INTEGER NOT NULL DEFAULT 0"
+        )
+
+    ability_group_columns = {
+        str(row["name"])
+        for row in conn.execute("PRAGMA table_info(player_ability_card_groups)").fetchall()
+    }
+    if "is_editable" not in ability_group_columns:
+        conn.execute(
+            "ALTER TABLE player_ability_card_groups ADD COLUMN is_editable INTEGER NOT NULL DEFAULT 1"
         )
 
 
@@ -1711,6 +1723,9 @@ def seed_source_ability_items(conn: sqlite3.Connection, user: dict[str, object])
         except Exception:
             pass
 
+    if int(user["id"]) != DEBUG_USER_ID and not SEED_NEW_USERS_FROM_OFFLINE:
+        return []
+
     payload = load_offline_api_payload("ability_index.json")
     abilities = payload.get("abilities") if isinstance(payload, dict) else None
     if isinstance(abilities, list):
@@ -1733,6 +1748,246 @@ def mark_ability_cards_seeded(conn: sqlite3.Connection, user_id: int) -> None:
     )
 
 
+def allocate_copy_ids_from_used(used_ids: set[int], copies: int) -> list[int]:
+    next_id = max(used_ids, default=0) + 1
+    allocated: list[int] = []
+    while len(allocated) < copies:
+        while next_id in used_ids:
+            next_id += 1
+        allocated.append(next_id)
+        used_ids.add(next_id)
+        next_id += 1
+    return allocated
+
+
+def split_copy_ids_from_group(
+    conn: sqlite3.Connection,
+    row: sqlite3.Row,
+    copies_to_take: int,
+) -> list[int]:
+    copy_ids = ability_copy_ids_from_row(row)
+    taken = copy_ids[: max(0, copies_to_take)]
+    remaining = copy_ids[len(taken) :]
+    if not taken:
+        return []
+
+    now = utc_text()
+    if remaining:
+        conn.execute(
+            """
+            UPDATE player_ability_card_groups
+            SET copy_ids_json = ?, copies = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (
+                json.dumps(remaining, separators=(",", ":")),
+                len(remaining),
+                now,
+                int(row["id"]),
+            ),
+        )
+    else:
+        conn.execute("DELETE FROM player_ability_card_groups WHERE id = ?", (int(row["id"]),))
+
+    return taken
+
+
+def write_default_ability_group(
+    conn: sqlite3.Connection,
+    user_id: int,
+    ability_code: int,
+    copy_ids: list[int],
+) -> bool:
+    copy_ids = [int(value) for value in copy_ids[:DEFAULT_ABILITY_COPY_COUNT] if int(value) > 0]
+    if not copy_ids:
+        return False
+
+    now = utc_text()
+    max_level = ability_max_level_for_code(ability_code)
+    rows = conn.execute(
+        """
+        SELECT *
+        FROM player_ability_card_groups
+        WHERE user_id = ? AND ability_code = ? AND is_editable = 0
+        ORDER BY id
+        """,
+        (int(user_id), int(ability_code)),
+    ).fetchall()
+
+    if rows:
+        primary = rows[0]
+        conn.execute(
+            """
+            UPDATE player_ability_card_groups
+            SET copy_ids_json = ?,
+                copies = ?,
+                level = ?,
+                awake_num = 5,
+                exp = ?,
+                is_locked = 1,
+                is_editable = 0,
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (
+                json.dumps(copy_ids, separators=(",", ":")),
+                len(copy_ids),
+                max_level,
+                ability_exp_for_level(max_level),
+                now,
+                int(primary["id"]),
+            ),
+        )
+        extra_ids = [int(row["id"]) for row in rows[1:]]
+        if extra_ids:
+            placeholders = ",".join("?" for _ in extra_ids)
+            conn.execute(f"DELETE FROM player_ability_card_groups WHERE id IN ({placeholders})", extra_ids)
+    else:
+        insert_ability_group(
+            conn,
+            user_id,
+            ability_code,
+            copy_ids,
+            max_level,
+            5,
+            True,
+            now,
+            created_at=now,
+            updated_at=now,
+            is_editable=False,
+        )
+    return True
+
+
+def add_editable_copy_ids(
+    conn: sqlite3.Connection,
+    user_id: int,
+    ability_code: int,
+    copy_ids: list[int],
+    level: int,
+    awake_num: int,
+    is_locked: bool,
+) -> None:
+    if not copy_ids:
+        return
+
+    row = ability_group_match_row(
+        conn,
+        user_id,
+        ability_code,
+        level,
+        awake_num,
+        is_locked,
+        is_editable=True,
+    )
+    if row is not None:
+        merge_copy_ids_into_group(conn, row, copy_ids)
+        return
+
+    now = utc_text()
+    insert_ability_group(
+        conn,
+        user_id,
+        ability_code,
+        copy_ids,
+        level,
+        awake_num,
+        is_locked,
+        now,
+        created_at=now,
+        updated_at=now,
+        is_editable=True,
+    )
+
+
+def ensure_default_ability_card_groups(conn: sqlite3.Connection, user_id: int) -> bool:
+    if DEFAULT_ABILITY_COPY_COUNT <= 0:
+        return False
+
+    changed = False
+    used_ids = copy_ids_for_user(conn, user_id)
+    now = utc_text()
+
+    for item in ability_catalog_list():
+        code = int(item["code"])
+        max_level = ability_max_level_for_code(code)
+        system_rows = conn.execute(
+            """
+            SELECT *
+            FROM player_ability_card_groups
+            WHERE user_id = ? AND ability_code = ? AND is_editable = 0
+            ORDER BY id
+            """,
+            (int(user_id), code),
+        ).fetchall()
+        system_ids = [
+            copy_id
+            for row in system_rows
+            for copy_id in ability_copy_ids_from_row(row)
+            if copy_id > 0
+        ]
+        default_ids = system_ids[:DEFAULT_ABILITY_COPY_COUNT]
+        extra_system_ids = system_ids[DEFAULT_ABILITY_COPY_COUNT:]
+
+        if len(default_ids) < DEFAULT_ABILITY_COPY_COUNT:
+            needed = DEFAULT_ABILITY_COPY_COUNT - len(default_ids)
+            editable_rows = conn.execute(
+                """
+                SELECT *
+                FROM player_ability_card_groups
+                WHERE user_id = ? AND ability_code = ? AND is_editable = 1
+                ORDER BY
+                    CASE
+                        WHEN level = ? AND awake_num = 5 AND is_locked = 1 THEN 0
+                        WHEN level = ? AND awake_num = 5 THEN 1
+                        ELSE 2
+                    END,
+                    id
+                """,
+                (int(user_id), code, max_level, max_level),
+            ).fetchall()
+            for row in editable_rows:
+                if needed <= 0:
+                    break
+                taken = split_copy_ids_from_group(conn, row, needed)
+                if taken:
+                    default_ids.extend(taken)
+                    needed -= len(taken)
+                    changed = True
+
+        if len(default_ids) < DEFAULT_ABILITY_COPY_COUNT:
+            allocated = allocate_copy_ids_from_used(
+                used_ids,
+                DEFAULT_ABILITY_COPY_COUNT - len(default_ids),
+            )
+            default_ids.extend(allocated)
+            changed = True
+
+        if extra_system_ids:
+            add_editable_copy_ids(conn, user_id, code, extra_system_ids, max_level, 5, True)
+            changed = True
+
+        if (
+            len(system_rows) != 1
+            or len(system_ids) != DEFAULT_ABILITY_COPY_COUNT
+            or extra_system_ids
+            or any(
+                int(row["level"]) != max_level
+                or int(row["awake_num"]) != 5
+                or not bool_from_db(row["is_locked"])
+                for row in system_rows
+            )
+        ):
+            changed = write_default_ability_group(conn, user_id, code, default_ids) or changed
+
+    if changed:
+        emit_log(
+            f"[CUSTOMIZER] normalized default ability cards user_id={int(user_id)} "
+            f"codes={len(load_ability_catalog())} copies_per_code={DEFAULT_ABILITY_COPY_COUNT}"
+        )
+    return changed
+
+
 def ensure_player_ability_cards(conn: sqlite3.Connection, user: dict[str, object]) -> bool:
     user_id = int(user["id"])
     existing = conn.execute(
@@ -1740,7 +1995,7 @@ def ensure_player_ability_cards(conn: sqlite3.Connection, user: dict[str, object
         (user_id,),
     ).fetchone()
     if existing is not None and int(existing["count"]) > 0:
-        return False
+        return ensure_default_ability_card_groups(conn, user_id)
 
     legacy_rows = conn.execute(
         """
@@ -1768,6 +2023,7 @@ def ensure_player_ability_cards(conn: sqlite3.Connection, user: dict[str, object
                 updated_at=str(row["updated_at"] or now),
             )
         mark_ability_cards_seeded(conn, user_id)
+        ensure_default_ability_card_groups(conn, user_id)
         emit_log(f"[CUSTOMIZER] migrated {len(legacy_rows)} ability card groups for user_id={user_id}")
         return True
 
@@ -1805,6 +2061,7 @@ def ensure_player_ability_cards(conn: sqlite3.Connection, user: dict[str, object
             group["first_get_at"] = get_at
 
     now = utc_text()
+    seeded_count = 0
     for key, group in groups.items():
         code = key[0]
         copy_ids = sorted(int(value) for value in group["copy_ids"] if int(value) > 0)
@@ -1820,9 +2077,11 @@ def ensure_player_ability_cards(conn: sqlite3.Connection, user: dict[str, object
             created_at=now,
             updated_at=now,
         )
+        seeded_count += 1
 
     mark_ability_cards_seeded(conn, user_id)
-    emit_log(f"[CUSTOMIZER] seeded {len(groups)} ability card rows for user_id={user_id}")
+    ensure_default_ability_card_groups(conn, user_id)
+    emit_log(f"[CUSTOMIZER] seeded {seeded_count} editable ability card rows for user_id={user_id}")
     return True
 
 
@@ -1837,6 +2096,7 @@ def insert_ability_group(
     first_get_at: str,
     created_at: str | None = None,
     updated_at: str | None = None,
+    is_editable: bool = True,
 ) -> int:
     now = utc_text()
     created_at = created_at or now
@@ -1852,8 +2112,8 @@ def insert_ability_group(
         """
         INSERT INTO player_ability_card_groups
             (user_id, ability_code, copy_ids_json, copies, level, awake_num, exp,
-             is_locked, first_get_at, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             is_locked, is_editable, first_get_at, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             int(user_id),
@@ -1864,6 +2124,7 @@ def insert_ability_group(
             awake_num,
             ability_exp_for_level(level),
             1 if is_locked else 0,
+            1 if is_editable else 0,
             first_get_at or now,
             created_at,
             updated_at,
@@ -1872,24 +2133,40 @@ def insert_ability_group(
     return int(cursor.lastrowid)
 
 
-def ability_rows_for_user(conn: sqlite3.Connection, user: dict[str, object]) -> list[sqlite3.Row]:
+def ability_rows_for_user(
+    conn: sqlite3.Connection,
+    user: dict[str, object],
+    editable_only: bool = False,
+) -> list[sqlite3.Row]:
     ensure_player_ability_cards(conn, user)
+    editable_sql = "AND is_editable = 1" if editable_only else ""
     return conn.execute(
-        """
+        f"""
         SELECT *
         FROM player_ability_card_groups
         WHERE user_id = ?
-        ORDER BY ability_code, level, awake_num, id
+          {editable_sql}
+        ORDER BY ability_code, is_editable, level, awake_num, id
         """,
         (int(user["id"]),),
     ).fetchall()
 
 
 def build_ability_payload_from_db(conn: sqlite3.Connection, user: dict[str, object]) -> dict[str, object]:
-    rows = ability_rows_for_user(conn, user)
-    used_ids: set[int] = set()
+    rows = ability_rows_for_user(conn, user, editable_only=True)
+    used_ids = {
+        copy_id
+        for row in conn.execute(
+            "SELECT copy_ids_json FROM player_ability_card_groups WHERE user_id = ? AND is_editable = 0",
+            (int(user["id"]),),
+        ).fetchall()
+        for copy_id in ability_copy_ids_from_row(row)
+    }
     row_copy_ids = [ability_copy_ids_from_row(row) for row in rows]
-    next_id = max((copy_id for copy_ids in row_copy_ids for copy_id in copy_ids), default=0) + 1
+    next_id = max(
+        (copy_id for copy_ids in row_copy_ids for copy_id in copy_ids),
+        default=max(used_ids, default=0),
+    ) + 1
     cards: list[dict[str, object]] = []
     now = utc_text()
 
@@ -2029,6 +2306,8 @@ def ability_row_to_api(row: sqlite3.Row) -> dict[str, object]:
             "awakeNum": int(row["awake_num"]),
             "exp": int(row["exp"]),
             "isLocked": bool_from_db(row["is_locked"]),
+            "isEditable": bool_from_db(row["is_editable"]),
+            "source": "custom" if bool_from_db(row["is_editable"]) else "game-default",
             "copyIds": ability_copy_ids_from_row(row),
             "image": customizer_image_url(code),
         }
@@ -2044,6 +2323,7 @@ def ability_group_match_row(
     awake_num: int,
     is_locked: bool,
     exclude_group_id: int | None = None,
+    is_editable: bool | None = True,
 ) -> sqlite3.Row | None:
     params: list[object] = [
         int(user_id),
@@ -2052,6 +2332,10 @@ def ability_group_match_row(
         int(awake_num),
         1 if is_locked else 0,
     ]
+    editable_sql = ""
+    if is_editable is not None:
+        editable_sql = " AND is_editable = ?"
+        params.append(1 if is_editable else 0)
     exclude_sql = ""
     if exclude_group_id is not None:
         exclude_sql = " AND id != ?"
@@ -2065,6 +2349,7 @@ def ability_group_match_row(
           AND level = ?
           AND awake_num = ?
           AND is_locked = ?
+          {editable_sql}
           {exclude_sql}
         ORDER BY id
         LIMIT 1
@@ -2200,6 +2485,8 @@ def update_player_ability_card_group(
         ).fetchone()
         if source is None:
             return None, "Owned ability group not found."
+        if not bool_from_db(source["is_editable"]):
+            return None, "Game default ability cards cannot be edited."
 
         code = int(source["ability_code"])
         max_level = ability_max_level_for_code(code)
@@ -2274,6 +2561,18 @@ def update_player_ability_card_group(
 def delete_player_ability_card_group(user: dict[str, object], group_id: int) -> tuple[bool, str | None]:
     with db_connect() as conn:
         ensure_player_ability_cards(conn, user)
+        source = conn.execute(
+            """
+            SELECT is_editable
+            FROM player_ability_card_groups
+            WHERE user_id = ? AND id = ?
+            """,
+            (int(user["id"]), int(group_id)),
+        ).fetchone()
+        if source is None:
+            return False, None
+        if not bool_from_db(source["is_editable"]):
+            return False, "Game default ability cards cannot be deleted."
         cursor = conn.execute(
             "DELETE FROM player_ability_card_groups WHERE user_id = ? AND id = ?",
             (int(user["id"]), int(group_id)),
