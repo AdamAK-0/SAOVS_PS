@@ -98,7 +98,30 @@ if ([string]::IsNullOrWhiteSpace($SslKey)) {
 New-Item -ItemType Directory -Force -Path $Logs | Out-Null
 
 if ([string]::IsNullOrWhiteSpace($ContentRoot)) {
-    $ContentRoot = Join-Path $Root "content\SAOVS\data1\com.bandainamcoent.saovsww\files"
+    $contentCandidates = @()
+    if (-not [string]::IsNullOrWhiteSpace($env:SAOVS_CONTENT_ROOT)) {
+        $contentCandidates += $env:SAOVS_CONTENT_ROOT
+    }
+    $contentCandidates += @(
+        (Join-Path $Root "content\files"),
+        (Join-Path $Root "content\SAOVS\data1\com.bandainamcoent.saovsww\files"),
+        (Join-Path $Root "..\SAOVS_Project\SAOVS\data1\com.bandainamcoent.saovsww\files"),
+        (Join-Path $Root "..\SAOVS_Project\SAOVS\data1\com.bandaicoent.saovswww\files")
+    )
+
+    foreach ($candidate in $contentCandidates) {
+        if (-not [string]::IsNullOrWhiteSpace($candidate)) {
+            $resolvedCandidate = [System.IO.Path]::GetFullPath($candidate)
+            if (Test-Path -LiteralPath (Join-Path $resolvedCandidate "sword.db")) {
+                $ContentRoot = $resolvedCandidate
+                break
+            }
+        }
+    }
+
+    if ([string]::IsNullOrWhiteSpace($ContentRoot)) {
+        $ContentRoot = Join-Path $Root "content\files"
+    }
 }
 
 function Assert-PortAvailable {
