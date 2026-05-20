@@ -6,6 +6,7 @@ import hashlib
 import hmac
 import json
 import logging
+import mimetypes
 import os
 import secrets
 import smtplib
@@ -17,6 +18,8 @@ from html import escape
 from pathlib import Path
 from re import search, sub
 from urllib.parse import parse_qs, quote, unquote, urlparse
+from urllib.error import URLError
+from urllib.request import Request as UrlRequest, urlopen
 
 from flask import Flask, Response, abort, g, jsonify, redirect, request, send_file
 from werkzeug.exceptions import HTTPException
@@ -80,10 +83,24 @@ BOOTSTRAP_LOGIN_PASSWORD = "adam"
 LOG_FILE = LOG_DIR / "saovs_private_server.log"
 REQUEST_DUMP_DIR = LOG_DIR / "request_bodies"
 ADMIN_STATIC_DIR = Path(__file__).with_name("admin_static")
+CUSTOMIZER_STATIC_DIR = Path(__file__).with_name("customizer_static")
+CUSTOMIZER_CONTENT_DIR = Path(
+    os.environ.get("SAOVS_CUSTOMIZER_CONTENT_DIR", SERVER_ROOT / "content" / "customizer")
+).resolve()
+ABILITY_CATALOG_FILE = Path(
+    os.environ.get("SAOVS_ABILITY_CATALOG_FILE", CUSTOMIZER_CONTENT_DIR / "ability_catalog.json")
+).resolve()
+ABILITY_IMAGE_CACHE_DIR = Path(
+    os.environ.get("SAOVS_ABILITY_IMAGE_CACHE_DIR", CUSTOMIZER_CONTENT_DIR / "ability_images")
+).resolve()
 ADMIN_LOG_READ_BYTES = int(os.environ.get("SAOVS_ADMIN_LOG_READ_BYTES", str(2 * 1024 * 1024)))
 ADMIN_LOG_LIMIT = int(os.environ.get("SAOVS_ADMIN_LOG_LIMIT", "250"))
 AUTH_CODE_TTL_SECONDS = int(os.environ.get("SAOVS_AUTH_CODE_TTL_SECONDS", "600"))
 SESSION_ACTIVE_SECONDS = int(os.environ.get("SAOVS_SESSION_ACTIVE_SECONDS", "1800"))
+CUSTOMIZER_SESSION_TTL_SECONDS = int(os.environ.get("SAOVS_CUSTOMIZER_SESSION_TTL_SECONDS", str(30 * 86400)))
+CUSTOMIZER_COOKIE_NAME = os.environ.get("SAOVS_CUSTOMIZER_COOKIE_NAME", "saovs_customizer_session")
+ABILITY_COPY_LIMIT = int(os.environ.get("SAOVS_ABILITY_COPY_LIMIT", "99"))
+ABILITY_IMAGE_MAX_BYTES = int(os.environ.get("SAOVS_ABILITY_IMAGE_MAX_BYTES", str(8 * 1024 * 1024)))
 PASSWORD_HASH_ITERATIONS = int(os.environ.get("SAOVS_PASSWORD_HASH_ITERATIONS", "180000"))
 EMAIL_CODE_TTL_SECONDS = int(os.environ.get("SAOVS_EMAIL_CODE_TTL_SECONDS", "300"))
 EMAIL_CODE_ATTEMPT_LIMIT = int(os.environ.get("SAOVS_EMAIL_CODE_ATTEMPT_LIMIT", "10"))
@@ -99,6 +116,25 @@ SMTP_USE_TLS = os.environ.get("SAOVS_SMTP_USE_TLS", "1") != "0"
 DEFAULT_LOGIN_USERNAME = os.environ.get("SAOVS_DEFAULT_LOGIN_USERNAME", "adam")
 DEFAULT_LOGIN_PASSWORD = os.environ.get("SAOVS_DEFAULT_LOGIN_PASSWORD", BOOTSTRAP_LOGIN_PASSWORD)
 ACCOUNT_PAYLOAD_CACHE_VERSION = "account-json-v1"
+ABILITY_EXP_BY_LEVEL = {
+    1: 0,
+    26: 3000,
+    30: 3416,
+    35: 4348,
+    40: 6223,
+    45: 9992,
+    50: 17578,
+    55: 32833,
+}
+CUSTOMIZER_HOSTS = {
+    host.strip().lower()
+    for host in os.environ.get(
+        "SAOVS_CUSTOMIZER_HOSTS",
+        "customizeequipement.saovs.com,customizeequipment.saovs.com",
+    ).split(",")
+    if host.strip()
+}
+ABILITY_CATALOG_CACHE: dict[int, dict[str, object]] | None = None
 
 
 def resolve_content_root() -> Path:
@@ -154,6 +190,7 @@ SAOVS_LOCALIZE_DATA_VER = int(os.environ.get("SAOVS_LOCALIZE_DATA_VER", offline_
 SAOVS_ADMIN_TOKEN = os.environ.get("SAOVS_ADMIN_TOKEN", "")
 SAOVS_ADMIN_USERNAME = os.environ.get("SAOVS_ADMIN_USERNAME", "admin")
 SAOVS_ADMIN_PASSWORD = os.environ.get("SAOVS_ADMIN_PASSWORD", "admin")
+SERVE_STATIC_USER_LIST_DB = os.environ.get("SAOVS_SERVE_STATIC_USER_LIST_DB", "0") == "1"
 SAOVS_ASSET_HOSTS = {
     host.strip().lower()
     for host in os.environ.get(
@@ -366,6 +403,19 @@ def init_db() -> None:
 
             CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
 
+            CREATE TABLE IF NOT EXISTS customizer_sessions (
+                token TEXT PRIMARY KEY,
+                login_user_id INTEGER NOT NULL REFERENCES login_users(id),
+                user_id INTEGER NOT NULL REFERENCES users(id),
+                created_at TEXT NOT NULL,
+                last_seen_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_customizer_sessions_user_id
+                ON customizer_sessions(user_id);
+            CREATE INDEX IF NOT EXISTS idx_customizer_sessions_login_user_id
+                ON customizer_sessions(login_user_id);
+
             CREATE TABLE IF NOT EXISTS login_users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 username TEXT UNIQUE NOT NULL,
@@ -442,6 +492,51 @@ def init_db() -> None:
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 PRIMARY KEY (user_id, route_key)
+            );
+
+            CREATE TABLE IF NOT EXISTS player_ability_cards (
+                user_id INTEGER NOT NULL REFERENCES users(id),
+                ability_code INTEGER NOT NULL,
+                copy_ids_json TEXT NOT NULL DEFAULT '[]',
+                copies INTEGER NOT NULL DEFAULT 1,
+                level INTEGER NOT NULL DEFAULT 1,
+                awake_num INTEGER NOT NULL DEFAULT 0,
+                exp INTEGER NOT NULL DEFAULT 0,
+                is_locked INTEGER NOT NULL DEFAULT 0,
+                first_get_at TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (user_id, ability_code)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_player_ability_cards_user_id
+                ON player_ability_cards(user_id);
+
+            CREATE TABLE IF NOT EXISTS player_ability_card_groups (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL REFERENCES users(id),
+                ability_code INTEGER NOT NULL,
+                copy_ids_json TEXT NOT NULL DEFAULT '[]',
+                copies INTEGER NOT NULL DEFAULT 1,
+                level INTEGER NOT NULL DEFAULT 1,
+                awake_num INTEGER NOT NULL DEFAULT 0,
+                exp INTEGER NOT NULL DEFAULT 0,
+                is_locked INTEGER NOT NULL DEFAULT 0,
+                first_get_at TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_player_ability_card_groups_user_id
+                ON player_ability_card_groups(user_id);
+            CREATE INDEX IF NOT EXISTS idx_player_ability_card_groups_code
+                ON player_ability_card_groups(user_id, ability_code);
+
+            CREATE TABLE IF NOT EXISTS player_customizer_state (
+                user_id INTEGER PRIMARY KEY REFERENCES users(id),
+                ability_cards_seeded INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
             );
             """
         )
@@ -973,7 +1068,16 @@ def delete_player_account(user_id: int) -> tuple[dict[str, object] | None, str |
         login_names = [str(row["username"]) for row in login_rows]
         counts: dict[str, int] = {}
 
-        for table in ("sessions", "device_links", "account_payloads", "password_reset_events"):
+        for table in (
+            "sessions",
+            "customizer_sessions",
+            "device_links",
+            "account_payloads",
+            "password_reset_events",
+            "player_ability_cards",
+            "player_ability_card_groups",
+            "player_customizer_state",
+        ):
             cursor = conn.execute(f"DELETE FROM {table} WHERE user_id = ?", (int(user_id),))
             counts[table] = cursor.rowcount if cursor.rowcount >= 0 else 0
 
@@ -1117,6 +1221,106 @@ def require_admin() -> None:
         abort(admin_auth_required_response())
 
 
+def request_host_name() -> str:
+    return request.host.split(":", 1)[0].lower()
+
+
+def is_customizer_request_host() -> bool:
+    return request_host_name() in CUSTOMIZER_HOSTS
+
+
+def issue_customizer_session(login_user: dict[str, object]) -> str:
+    token = "cust-" + secrets.token_urlsafe(32)
+    now = utc_text()
+    with db_connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO customizer_sessions
+                (token, login_user_id, user_id, created_at, last_seen_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (token, int(login_user["id"]), int(login_user["user_id"]), now, now),
+        )
+    return token
+
+
+def delete_customizer_session(token: str) -> None:
+    if not token:
+        return
+    with db_connect() as conn:
+        conn.execute("DELETE FROM customizer_sessions WHERE token = ?", (token,))
+
+
+def customizer_account_from_cookie() -> dict[str, object] | None:
+    token = request.cookies.get(CUSTOMIZER_COOKIE_NAME, "")
+    if not token:
+        return None
+
+    cutoff = utc_text(datetime.now(timezone.utc) - timedelta(seconds=CUSTOMIZER_SESSION_TTL_SECONDS))
+    now = utc_text()
+    with db_connect() as conn:
+        row = conn.execute(
+            """
+            SELECT
+                customizer_sessions.token,
+                login_users.id AS login_user_id,
+                login_users.username,
+                login_users.display_name,
+                login_users.password_change_required,
+                users.id AS user_id,
+                users.user_code,
+                users.uuid,
+                users.user_name,
+                users.tutorial_step
+            FROM customizer_sessions
+            JOIN login_users ON login_users.id = customizer_sessions.login_user_id
+            JOIN users ON users.id = customizer_sessions.user_id
+            WHERE customizer_sessions.token = ?
+              AND customizer_sessions.last_seen_at >= ?
+            """,
+            (token, cutoff),
+        ).fetchone()
+        if row is None:
+            conn.execute("DELETE FROM customizer_sessions WHERE token = ?", (token,))
+            return None
+        conn.execute("UPDATE customizer_sessions SET last_seen_at = ? WHERE token = ?", (now, token))
+        return dict(row)
+
+
+def customizer_account_response(account: dict[str, object]) -> dict[str, object]:
+    return {
+        "email": str(account["username"]),
+        "displayName": str(account["display_name"]),
+        "userId": int(account["user_id"]),
+        "userCode": int(account["user_code"]),
+        "userName": str(account["user_name"]),
+        "uuid": str(account["uuid"]),
+    }
+
+
+def customizer_user_from_account(account: dict[str, object]) -> dict[str, object]:
+    return {
+        "id": int(account["user_id"]),
+        "user_code": int(account["user_code"]),
+        "uuid": str(account["uuid"]),
+        "user_name": str(account["user_name"]),
+        "tutorial_step": str(account["tutorial_step"]),
+    }
+
+
+def customizer_unauthorized_response() -> Response:
+    response = jsonify({"ok": False, "authenticated": False, "error": "Login required."})
+    response.status_code = 401
+    return response
+
+
+def require_customizer_account() -> dict[str, object]:
+    account = customizer_account_from_cookie()
+    if account is None:
+        abort(customizer_unauthorized_response())
+    return account
+
+
 def clamp_int(value: object, default: int, minimum: int, maximum: int) -> int:
     try:
         parsed = int(value)
@@ -1161,6 +1365,10 @@ def log_entry_category(path: str, raw: str) -> str:
         return "asset"
     if lower_path.startswith("/admin"):
         return "admin"
+    if lower_path.startswith("/customize/api"):
+        return "api"
+    if lower_path.startswith("/customize"):
+        return "auth"
     if (
         "transfer" in lower_path
         or "bnid" in lower_path
@@ -1365,8 +1573,723 @@ def offline_payload_cache_key(file_name: str) -> str:
     return f"{ACCOUNT_PAYLOAD_CACHE_VERSION}:{file_name}:{stamp}"
 
 
+def ability_rarity_for_code(ability_code: int) -> int:
+    return max(0, int(ability_code) // 10000)
+
+
+def ability_max_level_for_code(ability_code: int) -> int:
+    catalog_item = load_ability_catalog().get(int(ability_code), {})
+    max_level = catalog_item.get("maxLevel")
+    if isinstance(max_level, int):
+        return max(1, max_level)
+    return {2: 35, 3: 45, 4: 55}.get(ability_rarity_for_code(ability_code), 55)
+
+
+def ability_exp_for_level(level: int) -> int:
+    level = max(1, int(level))
+    if level in ABILITY_EXP_BY_LEVEL:
+        return ABILITY_EXP_BY_LEVEL[level]
+
+    points = sorted(ABILITY_EXP_BY_LEVEL)
+    lower = max((point for point in points if point <= level), default=1)
+    upper = min((point for point in points if point >= level), default=points[-1])
+    if lower == upper:
+        return ABILITY_EXP_BY_LEVEL[lower]
+
+    lower_exp = ABILITY_EXP_BY_LEVEL[lower]
+    upper_exp = ABILITY_EXP_BY_LEVEL[upper]
+    ratio = (level - lower) / (upper - lower)
+    return int(round(lower_exp + ((upper_exp - lower_exp) * ratio)))
+
+
+def load_ability_catalog() -> dict[int, dict[str, object]]:
+    global ABILITY_CATALOG_CACHE
+    if ABILITY_CATALOG_CACHE is not None:
+        return ABILITY_CATALOG_CACHE
+
+    items: list[dict[str, object]] = []
+    if ABILITY_CATALOG_FILE.is_file():
+        try:
+            with ABILITY_CATALOG_FILE.open("r", encoding="utf-8") as handle:
+                payload = json.load(handle)
+            if isinstance(payload, dict) and isinstance(payload.get("abilities"), list):
+                items = [item for item in payload["abilities"] if isinstance(item, dict)]
+        except Exception as exc:
+            emit_log(f"[CUSTOMIZER] failed to read ability catalog {ABILITY_CATALOG_FILE}: {exc}")
+
+    catalog: dict[int, dict[str, object]] = {}
+    for item in items:
+        try:
+            code = int(item.get("code"))
+        except (TypeError, ValueError):
+            continue
+        rarity = int(item.get("rarity") or ability_rarity_for_code(code))
+        max_level = int(item.get("maxLevel") or {2: 35, 3: 45, 4: 55}.get(rarity, 55))
+        catalog[code] = {
+            "code": code,
+            "name": str(item.get("name") or f"Ability {code}"),
+            "character": str(item.get("character") or ""),
+            "gameId": item.get("gameId"),
+            "imageUrl": str(item.get("imageUrl") or ""),
+            "rarity": rarity,
+            "maxLevel": max_level,
+        }
+
+    offline = load_offline_api_payload("ability_index.json")
+    abilities = offline.get("abilities") if isinstance(offline, dict) else None
+    if isinstance(abilities, list):
+        for ability in abilities:
+            if not isinstance(ability, dict):
+                continue
+            try:
+                code = int(ability.get("code"))
+            except (TypeError, ValueError):
+                continue
+            rarity = ability_rarity_for_code(code)
+            catalog.setdefault(
+                code,
+                {
+                    "code": code,
+                    "name": f"Ability {code}",
+                    "character": "",
+                    "gameId": None,
+                    "imageUrl": "",
+                    "rarity": rarity,
+                    "maxLevel": {2: 35, 3: 45, 4: 55}.get(rarity, 55),
+                },
+            )
+
+    ABILITY_CATALOG_CACHE = catalog
+    return catalog
+
+
+def ability_catalog_list() -> list[dict[str, object]]:
+    return sorted(
+        load_ability_catalog().values(),
+        key=lambda item: (int(item.get("rarity") or 0), int(item.get("code") or 0)),
+    )
+
+
+def customizer_image_url(ability_code: int) -> str:
+    return f"/customize/ability-image/{int(ability_code)}"
+
+
+def ability_copy_ids_from_row(row: sqlite3.Row) -> list[int]:
+    try:
+        values = json.loads(str(row["copy_ids_json"] or "[]"))
+    except Exception:
+        return []
+    copy_ids: list[int] = []
+    if not isinstance(values, list):
+        return copy_ids
+    for value in values:
+        try:
+            copy_id = int(value)
+        except (TypeError, ValueError):
+            continue
+        if copy_id > 0:
+            copy_ids.append(copy_id)
+    return copy_ids
+
+
+def seed_source_ability_items(conn: sqlite3.Connection, user: dict[str, object]) -> list[dict[str, object]]:
+    route_key = offline_payload_cache_key("ability_index.json")
+    row = conn.execute(
+        """
+        SELECT payload_json
+        FROM account_payloads
+        WHERE user_id = ? AND route_key = ?
+        """,
+        (int(user["id"]), route_key),
+    ).fetchone()
+    if row is not None:
+        try:
+            payload = json.loads(str(row["payload_json"]))
+            abilities = payload.get("abilities") if isinstance(payload, dict) else None
+            if isinstance(abilities, list):
+                return [item for item in abilities if isinstance(item, dict)]
+        except Exception:
+            pass
+
+    payload = load_offline_api_payload("ability_index.json")
+    abilities = payload.get("abilities") if isinstance(payload, dict) else None
+    if isinstance(abilities, list):
+        return [item for item in abilities if isinstance(item, dict)]
+    return []
+
+
+def mark_ability_cards_seeded(conn: sqlite3.Connection, user_id: int) -> None:
+    now = utc_text()
+    conn.execute(
+        """
+        INSERT INTO player_customizer_state
+            (user_id, ability_cards_seeded, created_at, updated_at)
+        VALUES (?, 1, ?, ?)
+        ON CONFLICT(user_id) DO UPDATE SET
+            ability_cards_seeded = 1,
+            updated_at = excluded.updated_at
+        """,
+        (int(user_id), now, now),
+    )
+
+
+def ensure_player_ability_cards(conn: sqlite3.Connection, user: dict[str, object]) -> bool:
+    user_id = int(user["id"])
+    existing = conn.execute(
+        "SELECT COUNT(*) AS count FROM player_ability_card_groups WHERE user_id = ?",
+        (user_id,),
+    ).fetchone()
+    if existing is not None and int(existing["count"]) > 0:
+        return False
+
+    legacy_rows = conn.execute(
+        """
+        SELECT *
+        FROM player_ability_cards
+        WHERE user_id = ?
+        ORDER BY ability_code
+        """,
+        (user_id,),
+    ).fetchall()
+    if legacy_rows:
+        now = utc_text()
+        for row in legacy_rows:
+            copy_ids = ability_copy_ids_from_row(row)
+            insert_ability_group(
+                conn,
+                user_id,
+                int(row["ability_code"]),
+                copy_ids,
+                int(row["level"]),
+                int(row["awake_num"]),
+                bool_from_db(row["is_locked"]),
+                str(row["first_get_at"] or now),
+                created_at=str(row["created_at"] or now),
+                updated_at=str(row["updated_at"] or now),
+            )
+        mark_ability_cards_seeded(conn, user_id)
+        emit_log(f"[CUSTOMIZER] migrated {len(legacy_rows)} ability card groups for user_id={user_id}")
+        return True
+
+    groups: dict[tuple[int, int, int, int, bool], dict[str, object]] = {}
+    for item in seed_source_ability_items(conn, user):
+        try:
+            code = int(item.get("code"))
+            copy_id = int(item.get("id"))
+        except (TypeError, ValueError):
+            continue
+        if code <= 0 or copy_id <= 0:
+            continue
+
+        level = clamp_int(item.get("level"), 1, 1, ability_max_level_for_code(code))
+        awake_num = clamp_int(item.get("awakeNum"), 0, 0, 5)
+        exp = clamp_int(item.get("exp"), ability_exp_for_level(level), 0, 99999999)
+        is_locked = bool(item.get("isLock"))
+        key = (code, level, awake_num, exp, is_locked)
+        group = groups.setdefault(
+            key,
+            {
+                "copy_ids": [],
+                "level": level,
+                "awake_num": awake_num,
+                "exp": exp,
+                "is_locked": is_locked,
+                "first_get_at": str(item.get("getAt") or utc_text()),
+            },
+        )
+        copy_ids = group["copy_ids"]
+        if isinstance(copy_ids, list) and copy_id not in copy_ids:
+            copy_ids.append(copy_id)
+        get_at = str(item.get("getAt") or "")
+        if get_at and get_at < str(group["first_get_at"]):
+            group["first_get_at"] = get_at
+
+    now = utc_text()
+    for key, group in groups.items():
+        code = key[0]
+        copy_ids = sorted(int(value) for value in group["copy_ids"] if int(value) > 0)
+        insert_ability_group(
+            conn,
+            user_id,
+            int(code),
+            copy_ids,
+            int(group["level"]),
+            int(group["awake_num"]),
+            bool(group["is_locked"]),
+            str(group["first_get_at"] or now),
+            created_at=now,
+            updated_at=now,
+        )
+
+    mark_ability_cards_seeded(conn, user_id)
+    emit_log(f"[CUSTOMIZER] seeded {len(groups)} ability card rows for user_id={user_id}")
+    return True
+
+
+def insert_ability_group(
+    conn: sqlite3.Connection,
+    user_id: int,
+    ability_code: int,
+    copy_ids: list[int],
+    level: int,
+    awake_num: int,
+    is_locked: bool,
+    first_get_at: str,
+    created_at: str | None = None,
+    updated_at: str | None = None,
+) -> int:
+    now = utc_text()
+    created_at = created_at or now
+    updated_at = updated_at or now
+    normalized_ids = [int(value) for value in copy_ids if int(value) > 0]
+    copies = len(normalized_ids)
+    if copies <= 0:
+        return 0
+    max_level = ability_max_level_for_code(ability_code)
+    level = clamp_int(level, max_level, 1, max_level)
+    awake_num = clamp_int(awake_num, 0, 0, 5)
+    cursor = conn.execute(
+        """
+        INSERT INTO player_ability_card_groups
+            (user_id, ability_code, copy_ids_json, copies, level, awake_num, exp,
+             is_locked, first_get_at, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            int(user_id),
+            int(ability_code),
+            json.dumps(normalized_ids, separators=(",", ":")),
+            copies,
+            level,
+            awake_num,
+            ability_exp_for_level(level),
+            1 if is_locked else 0,
+            first_get_at or now,
+            created_at,
+            updated_at,
+        ),
+    )
+    return int(cursor.lastrowid)
+
+
+def ability_rows_for_user(conn: sqlite3.Connection, user: dict[str, object]) -> list[sqlite3.Row]:
+    ensure_player_ability_cards(conn, user)
+    return conn.execute(
+        """
+        SELECT *
+        FROM player_ability_card_groups
+        WHERE user_id = ?
+        ORDER BY ability_code, level, awake_num, id
+        """,
+        (int(user["id"]),),
+    ).fetchall()
+
+
+def build_ability_payload_from_db(conn: sqlite3.Connection, user: dict[str, object]) -> dict[str, object]:
+    rows = ability_rows_for_user(conn, user)
+    used_ids: set[int] = set()
+    row_copy_ids = [ability_copy_ids_from_row(row) for row in rows]
+    next_id = max((copy_id for copy_ids in row_copy_ids for copy_id in copy_ids), default=0) + 1
+    cards: list[dict[str, object]] = []
+    now = utc_text()
+
+    for row, original_ids in zip(rows, row_copy_ids):
+        code = int(row["ability_code"])
+        copies = clamp_int(row["copies"], len(original_ids) or 1, 0, max(ABILITY_COPY_LIMIT, len(original_ids)))
+        if copies <= 0:
+            continue
+
+        normalized_ids: list[int] = []
+        for copy_id in original_ids:
+            if len(normalized_ids) >= copies:
+                break
+            if copy_id in used_ids:
+                continue
+            used_ids.add(copy_id)
+            normalized_ids.append(copy_id)
+
+        while len(normalized_ids) < copies:
+            while next_id in used_ids:
+                next_id += 1
+            normalized_ids.append(next_id)
+            used_ids.add(next_id)
+            next_id += 1
+
+        if normalized_ids != original_ids[:copies] or len(original_ids) != copies:
+            conn.execute(
+                """
+                UPDATE player_ability_card_groups
+                SET copy_ids_json = ?, copies = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    json.dumps(normalized_ids, separators=(",", ":")),
+                    copies,
+                    now,
+                    int(row["id"]),
+                ),
+            )
+
+        level = clamp_int(row["level"], 1, 1, ability_max_level_for_code(code))
+        awake_num = clamp_int(row["awake_num"], 0, 0, 5)
+        exp = clamp_int(row["exp"], ability_exp_for_level(level), 0, 99999999)
+        get_at = str(row["first_get_at"] or now)
+        for copy_id in normalized_ids:
+            cards.append(
+                {
+                    "code": code,
+                    "id": int(copy_id),
+                    "awakeNum": awake_num,
+                    "level": level,
+                    "exp": exp,
+                    "isLock": bool_from_db(row["is_locked"]),
+                    "getAt": get_at,
+                }
+            )
+
+    cards.sort(key=lambda item: int(item["id"]))
+    return {"abilities": cards}
+
+
+def sync_ability_payload_cache(conn: sqlite3.Connection, user: dict[str, object], payload: dict[str, object]) -> None:
+    route_key = offline_payload_cache_key("ability_index.json")
+    now = utc_text()
+    conn.execute(
+        """
+        INSERT INTO account_payloads (user_id, route_key, payload_json, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(user_id, route_key) DO UPDATE SET
+            payload_json = excluded.payload_json,
+            updated_at = excluded.updated_at
+        """,
+        (
+            int(user["id"]),
+            route_key,
+            json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+            now,
+            now,
+        ),
+    )
+
+
+def ability_payload_from_customizer(user: dict[str, object]) -> dict[str, object]:
+    with db_connect() as conn:
+        seeded = ensure_player_ability_cards(conn, user)
+        payload = build_ability_payload_from_db(conn, user)
+        if seeded:
+            sync_ability_payload_cache(conn, user, payload)
+        abilities = payload.get("abilities") if isinstance(payload, dict) else None
+        emit_log(
+            f"[CUSTOMIZER] ability payload user_id={int(user['id'])} "
+            f"copies={len(abilities) if isinstance(abilities, list) else 0}"
+        )
+        return payload
+
+
+def ability_copy_count_for_user(user: dict[str, object]) -> int:
+    with db_connect() as conn:
+        ensure_player_ability_cards(conn, user)
+        row = conn.execute(
+            """
+            SELECT COALESCE(SUM(copies), 0) AS copy_count
+            FROM player_ability_card_groups
+            WHERE user_id = ?
+            """,
+            (int(user["id"]),),
+        ).fetchone()
+        return int(row["copy_count"] if row is not None else 0)
+
+
+def apply_inventory_summary(file_name: str, payload: dict[str, object], user: dict[str, object]) -> dict[str, object]:
+    if file_name not in {"home_index.json", "user_profile.json"}:
+        return payload
+    user_info = payload.get("userInfo")
+    if not isinstance(user_info, dict):
+        return payload
+
+    payload = dict(payload)
+    user_info = dict(user_info)
+    ability_count = ability_copy_count_for_user(user)
+    user_info["abilityCardSum"] = ability_count
+    user_info["abilityCardMax"] = max(clamp_int(user_info.get("abilityCardMax"), 0, 0, 99999999), ability_count)
+    payload["userInfo"] = user_info
+    return payload
+
+
+def ability_row_to_api(row: sqlite3.Row) -> dict[str, object]:
+    code = int(row["ability_code"])
+    meta = dict(load_ability_catalog().get(code, {}))
+    meta.update(
+        {
+            "groupId": int(row["id"]),
+            "code": code,
+            "copies": int(row["copies"]),
+            "level": int(row["level"]),
+            "potential": int(row["awake_num"]),
+            "awakeNum": int(row["awake_num"]),
+            "exp": int(row["exp"]),
+            "isLocked": bool_from_db(row["is_locked"]),
+            "copyIds": ability_copy_ids_from_row(row),
+            "image": customizer_image_url(code),
+        }
+    )
+    return meta
+
+
+def ability_group_match_row(
+    conn: sqlite3.Connection,
+    user_id: int,
+    ability_code: int,
+    level: int,
+    awake_num: int,
+    is_locked: bool,
+    exclude_group_id: int | None = None,
+) -> sqlite3.Row | None:
+    params: list[object] = [
+        int(user_id),
+        int(ability_code),
+        int(level),
+        int(awake_num),
+        1 if is_locked else 0,
+    ]
+    exclude_sql = ""
+    if exclude_group_id is not None:
+        exclude_sql = " AND id != ?"
+        params.append(int(exclude_group_id))
+    return conn.execute(
+        f"""
+        SELECT *
+        FROM player_ability_card_groups
+        WHERE user_id = ?
+          AND ability_code = ?
+          AND level = ?
+          AND awake_num = ?
+          AND is_locked = ?
+          {exclude_sql}
+        ORDER BY id
+        LIMIT 1
+        """,
+        params,
+    ).fetchone()
+
+
+def copy_ids_for_user(conn: sqlite3.Connection, user_id: int) -> set[int]:
+    return {
+        copy_id
+        for row in conn.execute(
+            "SELECT copy_ids_json FROM player_ability_card_groups WHERE user_id = ?",
+            (int(user_id),),
+        ).fetchall()
+        for copy_id in ability_copy_ids_from_row(row)
+    }
+
+
+def allocate_ability_copy_ids(conn: sqlite3.Connection, user_id: int, copies: int) -> list[int]:
+    existing_ids = copy_ids_for_user(conn, user_id)
+    next_id = max(existing_ids, default=0) + 1
+    allocated: list[int] = []
+    while len(allocated) < copies:
+        while next_id in existing_ids:
+            next_id += 1
+        allocated.append(next_id)
+        existing_ids.add(next_id)
+        next_id += 1
+    return allocated
+
+
+def merge_copy_ids_into_group(
+    conn: sqlite3.Connection,
+    group: sqlite3.Row,
+    copy_ids: list[int],
+) -> sqlite3.Row:
+    now = utc_text()
+    merged_ids = ability_copy_ids_from_row(group)
+    for copy_id in copy_ids:
+        if copy_id not in merged_ids:
+            merged_ids.append(copy_id)
+    conn.execute(
+        """
+        UPDATE player_ability_card_groups
+        SET copy_ids_json = ?, copies = ?, updated_at = ?
+        WHERE id = ?
+        """,
+        (
+            json.dumps(merged_ids, separators=(",", ":")),
+            len(merged_ids),
+            now,
+            int(group["id"]),
+        ),
+    )
+    return conn.execute(
+        "SELECT * FROM player_ability_card_groups WHERE id = ?",
+        (int(group["id"]),),
+    ).fetchone()
+
+
+def add_player_ability_card_group(
+    user: dict[str, object],
+    ability_code: int,
+    level: int,
+    awake_num: int,
+    copies: int,
+    is_locked: bool,
+) -> tuple[dict[str, object] | None, str | None]:
+    catalog = load_ability_catalog()
+    if ability_code not in catalog:
+        return None, "Unknown ability card code."
+
+    max_level = ability_max_level_for_code(ability_code)
+    level = clamp_int(level, max_level, 1, max_level)
+    awake_num = clamp_int(awake_num, 0, 0, 5)
+    copies = clamp_int(copies, 1, 1, ABILITY_COPY_LIMIT)
+    now = utc_text()
+
+    with db_connect() as conn:
+        ensure_player_ability_cards(conn, user)
+        copy_ids = allocate_ability_copy_ids(conn, int(user["id"]), copies)
+        row = ability_group_match_row(
+            conn,
+            int(user["id"]),
+            ability_code,
+            level,
+            awake_num,
+            is_locked,
+        )
+        if row is not None:
+            row = merge_copy_ids_into_group(conn, row, copy_ids)
+        else:
+            group_id = insert_ability_group(
+                conn,
+                int(user["id"]),
+                ability_code,
+                copy_ids,
+                level,
+                awake_num,
+                is_locked,
+                now,
+                created_at=now,
+                updated_at=now,
+            )
+            row = conn.execute(
+                "SELECT * FROM player_ability_card_groups WHERE id = ?",
+                (group_id,),
+            ).fetchone()
+        payload = build_ability_payload_from_db(conn, user)
+        sync_ability_payload_cache(conn, user, payload)
+        emit_log(f"[CUSTOMIZER] added ability code={ability_code} user_id={int(user['id'])}")
+        return ability_row_to_api(row), None
+
+
+def update_player_ability_card_group(
+    user: dict[str, object],
+    group_id: int,
+    level: int,
+    awake_num: int,
+    copies_to_edit: int,
+    is_locked: bool,
+) -> tuple[dict[str, object] | None, str | None]:
+    with db_connect() as conn:
+        ensure_player_ability_cards(conn, user)
+        source = conn.execute(
+            """
+            SELECT *
+            FROM player_ability_card_groups
+            WHERE id = ? AND user_id = ?
+            """,
+            (int(group_id), int(user["id"])),
+        ).fetchone()
+        if source is None:
+            return None, "Owned ability group not found."
+
+        code = int(source["ability_code"])
+        max_level = ability_max_level_for_code(code)
+        level = clamp_int(level, max_level, 1, max_level)
+        awake_num = clamp_int(awake_num, 0, 0, 5)
+        copy_ids = ability_copy_ids_from_row(source)
+        copies_to_edit = clamp_int(copies_to_edit, len(copy_ids), 1, max(1, len(copy_ids)))
+        moved_ids = copy_ids[:copies_to_edit]
+        remaining_ids = copy_ids[copies_to_edit:]
+        now = utc_text()
+
+        same_group = (
+            int(source["level"]) == level
+            and int(source["awake_num"]) == awake_num
+            and bool_from_db(source["is_locked"]) == is_locked
+        )
+        if same_group:
+            return ability_row_to_api(source), None
+
+        target = ability_group_match_row(
+            conn,
+            int(user["id"]),
+            code,
+            level,
+            awake_num,
+            is_locked,
+            exclude_group_id=int(source["id"]),
+        )
+        if remaining_ids:
+            conn.execute(
+                """
+                UPDATE player_ability_card_groups
+                SET copy_ids_json = ?, copies = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    json.dumps(remaining_ids, separators=(",", ":")),
+                    len(remaining_ids),
+                    now,
+                    int(source["id"]),
+                ),
+            )
+        else:
+            conn.execute("DELETE FROM player_ability_card_groups WHERE id = ?", (int(source["id"]),))
+
+        if target is not None:
+            result_row = merge_copy_ids_into_group(conn, target, moved_ids)
+        else:
+            group_id = insert_ability_group(
+                conn,
+                int(user["id"]),
+                code,
+                moved_ids,
+                level,
+                awake_num,
+                is_locked,
+                str(source["first_get_at"] or now),
+                created_at=now,
+                updated_at=now,
+            )
+            result_row = conn.execute(
+                "SELECT * FROM player_ability_card_groups WHERE id = ?",
+                (group_id,),
+            ).fetchone()
+
+        payload = build_ability_payload_from_db(conn, user)
+        sync_ability_payload_cache(conn, user, payload)
+        emit_log(f"[CUSTOMIZER] updated ability group={int(source['id'])} user_id={int(user['id'])}")
+        return ability_row_to_api(result_row), None
+
+
+def delete_player_ability_card_group(user: dict[str, object], group_id: int) -> tuple[bool, str | None]:
+    with db_connect() as conn:
+        ensure_player_ability_cards(conn, user)
+        cursor = conn.execute(
+            "DELETE FROM player_ability_card_groups WHERE user_id = ? AND id = ?",
+            (int(user["id"]), int(group_id)),
+        )
+        payload = build_ability_payload_from_db(conn, user)
+        sync_ability_payload_cache(conn, user, payload)
+        emit_log(f"[CUSTOMIZER] deleted ability group={group_id} user_id={int(user['id'])}")
+        return cursor.rowcount > 0, None
+
+
 def account_payload_from_cache(file_name: str, user: dict[str, object]) -> dict[str, object] | None:
+    if file_name == "ability_index.json":
+        return ability_payload_from_customizer(user)
+
     route_key = offline_payload_cache_key(file_name)
+    cached_payload: dict[str, object] | None = None
     with db_connect() as conn:
         row = conn.execute(
             """
@@ -1379,18 +2302,21 @@ def account_payload_from_cache(file_name: str, user: dict[str, object]) -> dict[
         if row:
             try:
                 payload = json.loads(str(row["payload_json"]))
-                return align_user_identity(payload, user) if isinstance(payload, dict) else None
+                cached_payload = align_user_identity(payload, user) if isinstance(payload, dict) else None
             except Exception:
                 conn.execute(
                     "DELETE FROM account_payloads WHERE user_id = ? AND route_key = ?",
                     (int(user["id"]), route_key),
                 )
+    if cached_payload is not None:
+        return apply_inventory_summary(file_name, cached_payload, user)
 
     base_payload = load_offline_api_payload(file_name)
     if base_payload is None:
         return None
 
     payload = align_user_identity(base_payload, user)
+    payload = apply_inventory_summary(file_name, payload, user)
     now = utc_text()
     with db_connect() as conn:
         conn.execute(
@@ -1480,6 +2406,7 @@ def is_sensitive_form_request() -> bool:
         "/reset-password.html",
         "/bnid/login",
         "/bnid/login.html",
+        "/customize/api/login",
     }:
         return False
     content_type = request.headers.get("Content-Type", "")
@@ -1581,6 +2508,13 @@ def serve_asset_file(path: str) -> Response | None:
         return Response("asset not found", status=404, mimetype="text/plain")
 
     rel = asset_path.relative_to(SAVED_ANDROID_FILES).as_posix()
+    if asset_path.name.lower() == "user_list.db" and not SERVE_STATIC_USER_LIST_DB:
+        emit_log(
+            "[ASSET] skipped bundled user_list.db; dynamic account payloads are authoritative "
+            "(set SAOVS_SERVE_STATIC_USER_LIST_DB=1 to serve it)"
+        )
+        return Response("asset disabled", status=404, mimetype="text/plain")
+
     emit_log(f"[ASSET] serving /{path} from {rel} ({asset_path.stat().st_size} bytes)")
     return send_file(
         asset_path,
@@ -2167,6 +3101,7 @@ def render_login_page(
       <a class="link-button secondary" href="{register_href}">Create Account</a>
       <a class="link-button secondary" href="{reset_href}">Reset Password</a>
     </div>
+    <p class="hint">Customize equipment at customizeequipement.saovs.com</p>
 """
     return render_account_shell("SAOVS Login", "Use your private-server account to continue.", body, error=error)
 
@@ -2394,6 +3329,8 @@ def is_relative_bnid_redirect(redirect_uri: str | None) -> bool:
 def index() -> Response:
     log_request()
     original = request.args.get("original", "")
+    if not original and is_customizer_request_host():
+        return render_customizer_app()
     if original:
         decoded_original = unquote(original)
         query = parse_qs(urlparse(decoded_original).query)
@@ -2800,6 +3737,269 @@ def transfer_set_bnid() -> Response:
     if wants_saovs_frame():
         return make_saovs_frame_response({})
     return jsonify({"statusCode": 10000, "response": {}})
+
+
+def render_customizer_app() -> Response:
+    response = send_file(CUSTOMIZER_STATIC_DIR / "customizer.html", mimetype="text/html")
+    response.headers["Cache-Control"] = "no-store, max-age=0"
+    return response
+
+
+def parse_request_bool(value: object, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def ability_image_cache_path(ability_code: int) -> Path | None:
+    for suffix in (".png", ".jpg", ".jpeg", ".webp", ".gif"):
+        candidate = ABILITY_IMAGE_CACHE_DIR / f"{int(ability_code)}{suffix}"
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def fetch_ability_image_to_cache(ability_code: int) -> Path | None:
+    item = load_ability_catalog().get(int(ability_code))
+    image_url = str((item or {}).get("imageUrl") or "")
+    if not image_url.startswith(("https://", "http://")):
+        return None
+
+    try:
+        request_info = UrlRequest(image_url, headers={"User-Agent": "Mozilla/5.0"})
+        with urlopen(request_info, timeout=15) as response:
+            content_type = response.headers.get("content-type", "application/octet-stream").split(";", 1)[0]
+            if not content_type.startswith("image/"):
+                emit_log(f"[CUSTOMIZER] image URL did not return an image for code={ability_code}")
+                return None
+            body = response.read(ABILITY_IMAGE_MAX_BYTES + 1)
+    except (OSError, URLError) as exc:
+        emit_log(f"[CUSTOMIZER] failed to cache image for code={ability_code}: {exc}")
+        return None
+
+    if len(body) > ABILITY_IMAGE_MAX_BYTES:
+        emit_log(f"[CUSTOMIZER] image too large for code={ability_code}")
+        return None
+
+    suffix = mimetypes.guess_extension(content_type) or ".img"
+    if suffix == ".jpe":
+        suffix = ".jpg"
+    ABILITY_IMAGE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    final_path = ABILITY_IMAGE_CACHE_DIR / f"{int(ability_code)}{suffix}"
+    tmp_path = final_path.with_suffix(final_path.suffix + ".tmp")
+    tmp_path.write_bytes(body)
+    os.replace(tmp_path, final_path)
+    emit_log(f"[CUSTOMIZER] cached ability image code={ability_code} path={final_path.name}")
+    return final_path
+
+
+def ability_image_placeholder(ability_code: int) -> Response:
+    safe_code = escape(str(int(ability_code)), quote=False)
+    svg = f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 500">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#172033"/>
+      <stop offset="1" stop-color="#2b3142"/>
+    </linearGradient>
+  </defs>
+  <rect width="360" height="500" fill="url(#bg)"/>
+  <rect x="18" y="18" width="324" height="464" rx="18" fill="none" stroke="#7dd3fc" stroke-width="3" opacity=".65"/>
+  <text x="180" y="235" text-anchor="middle" font-family="Arial, sans-serif" font-size="28" fill="#e8f4ff">Ability</text>
+  <text x="180" y="275" text-anchor="middle" font-family="Arial, sans-serif" font-size="34" font-weight="700" fill="#f8d274">{safe_code}</text>
+</svg>"""
+    return Response(svg, mimetype="image/svg+xml")
+
+
+@app.route("/customize", methods=["GET"])
+@app.route("/customize/", methods=["GET"])
+def customizer_page() -> Response:
+    log_request()
+    return render_customizer_app()
+
+
+@app.route("/customize/assets/<path:filename>", methods=["GET"])
+def customizer_static_asset(filename: str) -> Response:
+    asset_path = (CUSTOMIZER_STATIC_DIR / filename).resolve()
+    static_root = CUSTOMIZER_STATIC_DIR.resolve()
+    if not asset_path.is_relative_to(static_root) or not asset_path.is_file():
+        abort(404)
+    response = send_file(asset_path)
+    response.headers["Cache-Control"] = "no-store, max-age=0"
+    return response
+
+
+@app.route("/customize/ability-image/<int:ability_code>", methods=["GET"])
+def customizer_ability_image(ability_code: int) -> Response:
+    if ability_code not in load_ability_catalog():
+        return ability_image_placeholder(ability_code)
+
+    image_path = ability_image_cache_path(ability_code) or fetch_ability_image_to_cache(ability_code)
+    if image_path is None:
+        return ability_image_placeholder(ability_code)
+
+    mimetype = mimetypes.guess_type(image_path.name)[0] or "application/octet-stream"
+    return send_file(image_path, mimetype=mimetype, conditional=True, etag=True, max_age=86400)
+
+
+@app.route("/customize/api/me", methods=["GET"])
+def customizer_api_me() -> Response:
+    account = customizer_account_from_cookie()
+    if account is None:
+        return jsonify({"ok": True, "authenticated": False})
+    return jsonify(
+        {
+            "ok": True,
+            "authenticated": True,
+            "account": customizer_account_response(account),
+        }
+    )
+
+
+@app.route("/customize/api/login", methods=["POST"])
+def customizer_api_login() -> Response:
+    log_request()
+    payload = request.get_json(silent=True) or request.form
+    username = str(payload.get("email") or payload.get("username") or "")
+    password = str(payload.get("password") or "")
+    login_user = authenticate_login_user(username, password)
+    if login_user is None:
+        return jsonify({"ok": False, "error": "Invalid email or password."}), 401
+    if bool_from_db(login_user.get("password_change_required")):
+        return jsonify({"ok": False, "error": "Reset this password by email before continuing."}), 403
+
+    token = issue_customizer_session(login_user)
+    user = get_user_by_id(int(login_user["user_id"])) or {}
+    account = {
+        "username": login_user["username"],
+        "display_name": login_user["display_name"],
+        "user_id": login_user["user_id"],
+        "user_code": user.get("user_code", 0),
+        "uuid": user.get("uuid", ""),
+        "user_name": user.get("user_name", login_user["display_name"]),
+        "tutorial_step": user.get("tutorial_step", DEBUG_TUTORIAL_STEP),
+    }
+
+    response = jsonify(
+        {
+            "ok": True,
+            "authenticated": True,
+            "account": customizer_account_response(account),
+        }
+    )
+    response.set_cookie(
+        CUSTOMIZER_COOKIE_NAME,
+        token,
+        max_age=CUSTOMIZER_SESSION_TTL_SECONDS,
+        httponly=True,
+        secure=request.is_secure,
+        samesite="Lax",
+    )
+    return response
+
+
+@app.route("/customize/api/logout", methods=["POST"])
+def customizer_api_logout() -> Response:
+    delete_customizer_session(request.cookies.get(CUSTOMIZER_COOKIE_NAME, ""))
+    response = jsonify({"ok": True})
+    response.delete_cookie(CUSTOMIZER_COOKIE_NAME)
+    return response
+
+
+@app.route("/customize/api/abilities", methods=["GET"])
+def customizer_api_abilities() -> Response:
+    account = require_customizer_account()
+    user = customizer_user_from_account(account)
+    with db_connect() as conn:
+        seeded = ensure_player_ability_cards(conn, user)
+        rows = ability_rows_for_user(conn, user)
+        if seeded:
+            sync_ability_payload_cache(conn, user, build_ability_payload_from_db(conn, user))
+
+    owned = [ability_row_to_api(row) for row in rows]
+    owned_copies_by_code: dict[int, int] = {}
+    for item in owned:
+        code = int(item["code"])
+        owned_copies_by_code[code] = owned_copies_by_code.get(code, 0) + int(item.get("copies") or 0)
+
+    catalog = []
+    for item in ability_catalog_list():
+        code = int(item["code"])
+        response_item = dict(item)
+        response_item["image"] = customizer_image_url(code)
+        response_item["ownedCopies"] = owned_copies_by_code.get(code, 0)
+        catalog.append(response_item)
+
+    return jsonify(
+        {
+            "ok": True,
+            "account": customizer_account_response(account),
+            "owned": owned,
+            "catalog": catalog,
+            "limits": {
+                "maxCopies": ABILITY_COPY_LIMIT,
+                "maxPotential": 5,
+            },
+        }
+    )
+
+
+@app.route("/customize/api/abilities", methods=["POST"])
+@app.route("/customize/api/abilities/<int:ability_code>", methods=["POST"])
+def customizer_api_add_ability(ability_code: int | None = None) -> Response:
+    account = require_customizer_account()
+    user = customizer_user_from_account(account)
+    payload = request.get_json(silent=True) or request.form
+    try:
+        code = int(ability_code or payload.get("code"))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "Ability code is required."}), 400
+
+    max_level = ability_max_level_for_code(code)
+    level = clamp_int(payload.get("level"), max_level, 1, max_level)
+    awake_num = clamp_int(payload.get("awakeNum", payload.get("potential")), 0, 0, 5)
+    copies = clamp_int(payload.get("copies"), 1, 1, ABILITY_COPY_LIMIT)
+    is_locked = parse_request_bool(payload.get("isLocked", payload.get("isLock")), False)
+    item, error = add_player_ability_card_group(user, code, level, awake_num, copies, is_locked)
+    if error or item is None:
+        return jsonify({"ok": False, "error": error or "Could not add ability card."}), 400
+    return jsonify({"ok": True, "item": item})
+
+
+@app.route("/customize/api/ability-groups/<int:group_id>", methods=["POST"])
+def customizer_api_update_ability_group(group_id: int) -> Response:
+    account = require_customizer_account()
+    user = customizer_user_from_account(account)
+    payload = request.get_json(silent=True) or request.form
+    row = None
+    with db_connect() as conn:
+        row = conn.execute(
+            "SELECT ability_code FROM player_ability_card_groups WHERE id = ? AND user_id = ?",
+            (int(group_id), int(user["id"])),
+        ).fetchone()
+    if row is None:
+        return jsonify({"ok": False, "error": "Owned ability group not found."}), 404
+
+    max_level = ability_max_level_for_code(int(row["ability_code"]))
+    level = clamp_int(payload.get("level"), max_level, 1, max_level)
+    awake_num = clamp_int(payload.get("awakeNum", payload.get("potential")), 0, 0, 5)
+    copies = clamp_int(payload.get("copies"), 1, 1, ABILITY_COPY_LIMIT)
+    is_locked = parse_request_bool(payload.get("isLocked", payload.get("isLock")), False)
+    item, error = update_player_ability_card_group(user, group_id, level, awake_num, copies, is_locked)
+    if error or item is None:
+        return jsonify({"ok": False, "error": error or "Could not update ability card."}), 400
+    return jsonify({"ok": True, "item": item})
+
+
+@app.route("/customize/api/ability-groups/<int:group_id>", methods=["DELETE"])
+def customizer_api_delete_ability_group(group_id: int) -> Response:
+    account = require_customizer_account()
+    user = customizer_user_from_account(account)
+    ok, error = delete_player_ability_card_group(user, group_id)
+    if error:
+        return jsonify({"ok": False, "error": error}), 400
+    return jsonify({"ok": True, "deleted": ok})
 
 
 @app.route("/admin", methods=["GET"])

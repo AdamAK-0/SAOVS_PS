@@ -12,6 +12,7 @@ runtime/
 
 # Large game content. Host this on disk/object storage/CDN instead of Git.
 content/SAOVS
+content/customizer/ability_images/
 
 # Local TLS material. Use real deployment secrets/certificates on the host.
 certs/
