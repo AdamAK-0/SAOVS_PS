@@ -660,35 +660,6 @@ def authenticate_login_user(username: str, password: str) -> dict[str, object] |
         return dict(row)
 
 
-def change_login_password(username: str, current_password: str, new_password: str) -> tuple[dict[str, object] | None, str | None]:
-    login_name = normalize_login_name(username)
-    if len(new_password) < 4:
-        return None, "New password must be at least 4 characters."
-    if new_password == BOOTSTRAP_LOGIN_PASSWORD:
-        return None, "Choose a different password."
-
-    with db_connect() as conn:
-        row = conn.execute("SELECT * FROM login_users WHERE username = ?", (login_name,)).fetchone()
-        if row is None or not verify_password(current_password, str(row["password_hash"])):
-            return None, "Invalid username or current password."
-
-        now = utc_text()
-        conn.execute(
-            """
-            UPDATE login_users
-            SET password_hash = ?,
-                password_change_required = 0,
-                last_login_at = ?,
-                updated_at = ?
-            WHERE id = ?
-            """,
-            (hash_password(new_password), now, now, int(row["id"])),
-        )
-        emit_log(f"[AUTH] changed password username={login_name} user_id={row['user_id']}")
-        row = conn.execute("SELECT * FROM login_users WHERE id = ?", (int(row["id"]),)).fetchone()
-        return dict(row), None
-
-
 def generate_email_code() -> str:
     return f"{secrets.randbelow(1_000_000):06d}"
 
@@ -2115,7 +2086,6 @@ def render_login_page(
     safe_redirect = escape(redirect_uri or "", quote=True)
     safe_username = escape(username, quote=True)
     register_href = escape(account_page_url("/register.html", redirect_uri), quote=True)
-    change_href = escape(account_page_url("/change-password.html", redirect_uri), quote=True)
     reset_href = escape(account_page_url("/reset-password.html", redirect_uri), quote=True)
     body = f"""
     <form method="post" action="{safe_action}">
@@ -2129,7 +2099,6 @@ def render_login_page(
     </form>
     <div class="links">
       <a class="link-button secondary" href="{register_href}">Create Account</a>
-      <a class="link-button secondary" href="{change_href}">Change Password</a>
       <a class="link-button secondary" href="{reset_href}">Reset Password</a>
     </div>
 """
@@ -2185,41 +2154,6 @@ def render_register_page(
     )
 
 
-def render_change_password_page(
-    redirect_uri: str | None = None,
-    error: str = "",
-    message: str = "",
-    username: str = "",
-) -> Response:
-    safe_action = escape(account_page_url("/change-password.html", redirect_uri), quote=True)
-    safe_redirect = escape(redirect_uri or "", quote=True)
-    safe_username = escape(username, quote=True)
-    login_href = escape(account_page_url("/login.html", redirect_uri), quote=True)
-    body = f"""
-    <form method="post" action="{safe_action}">
-      <input type="hidden" name="mode" value="change_password">
-      <input type="hidden" name="redirect_uri" value="{safe_redirect}">
-      <label for="change-email">Email</label>
-      <input id="change-email" name="email" value="{safe_username}" autocomplete="username" required>
-      <label for="current-password">Current Password</label>
-      <input id="current-password" name="password" type="password" autocomplete="current-password" required>
-      <label for="new-password">New Password</label>
-      <input id="new-password" name="new_password" type="password" autocomplete="new-password" required>
-      <button type="submit">Change Password</button>
-    </form>
-    <div class="links single">
-      <a class="link-button secondary" href="{login_href}">Back To Login</a>
-    </div>
-"""
-    return render_account_shell(
-        "Change Password",
-        "Confirm the old password before setting a new one.",
-        body,
-        error=error,
-        message=message,
-    )
-
-
 def render_reset_password_page(
     redirect_uri: str | None = None,
     error: str = "",
@@ -2265,7 +2199,7 @@ def render_bnid_login_page(
     require_password_change: bool = False,
 ) -> Response:
     if require_password_change:
-        return render_change_password_page(redirect_uri, error, username=username)
+        return render_reset_password_page(redirect_uri, error, email=username)
     return render_login_page(redirect_uri, error, username)
 
 
@@ -2273,8 +2207,6 @@ def handle_bnid_login_post() -> Response:
     mode = request.form.get("mode", "login")
     if mode in {"register", "send_code"}:
         return handle_register_post()
-    if mode == "change_password":
-        return handle_change_password_post()
     if mode in {"send_reset_code", "reset_password"}:
         return handle_reset_password_post()
 
@@ -2286,10 +2218,10 @@ def handle_bnid_login_post() -> Response:
     if login_user is None:
         return render_login_page(redirect_uri, "Invalid email or password.", username)
     if bool_from_db(login_user.get("password_change_required")):
-        return render_change_password_page(
+        return render_reset_password_page(
             redirect_uri,
-            "Change this bootstrap password before continuing.",
-            username=username,
+            "Reset this password by email before continuing.",
+            email=username,
         )
 
     auth_code = issue_auth_code(login_user)
@@ -2334,22 +2266,6 @@ def handle_register_post() -> Response:
     auth_code = issue_auth_code(login_user)
     target = local_auth_result_url(auth_code, redirect_uri)
     emit_log(f"[AUTH] returning auth_result for login={login_email} user_id={login_user['user_id']}")
-    return redirect(target, code=302)
-
-
-def handle_change_password_post() -> Response:
-    redirect_uri = request.form.get("redirect_uri") or request.args.get("redirect_uri")
-    username = request.form.get("email") or request.form.get("username", "")
-    password = request.form.get("password", "")
-    new_password = request.form.get("new_password", "")
-
-    login_user, error = change_login_password(username, password, new_password)
-    if error or login_user is None:
-        return render_change_password_page(redirect_uri, error or "Could not change password.", username=username)
-
-    auth_code = issue_auth_code(login_user)
-    target = local_auth_result_url(auth_code, redirect_uri)
-    emit_log(f"[AUTH] returning auth_result after password change for login={normalize_login_name(username)} user_id={login_user['user_id']}")
     return redirect(target, code=302)
 
 
@@ -2476,12 +2392,10 @@ def register_html() -> Response:
 
 
 @app.route("/change-password.html", methods=["GET", "POST"])
-def change_password_html() -> Response:
+def legacy_change_password_html() -> Response:
     log_request()
-    redirect_uri = request.args.get("redirect_uri")
-    if request.method == "POST":
-        return handle_change_password_post()
-    return render_change_password_page(redirect_uri)
+    redirect_uri = request.form.get("redirect_uri") or request.args.get("redirect_uri")
+    return redirect(account_page_url("/reset-password.html", redirect_uri), code=302)
 
 
 @app.route("/reset-password.html", methods=["GET", "POST"])
