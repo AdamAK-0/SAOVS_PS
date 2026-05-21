@@ -93,10 +93,6 @@ ROUTE_SLOW_SECONDS = float(os.environ.get("SAOVS_ROUTE_SLOW_SECONDS", "10"))
 SQLITE_TIMEOUT_SECONDS = float(os.environ.get("SAOVS_SQLITE_TIMEOUT_SECONDS", "10"))
 ASSET_INDEX_TTL_SECONDS = int(os.environ.get("SAOVS_ASSET_INDEX_TTL_SECONDS", "3600"))
 ASSET_MISS_REFRESH_COOLDOWN_SECONDS = int(os.environ.get("SAOVS_ASSET_MISS_REFRESH_COOLDOWN_SECONDS", "30"))
-TEMPLATE_SAVE_DIR = Path(
-    os.environ.get("SAOVS_TEMPLATE_SAVE_DIR", SERVER_ROOT / "template_save")
-).resolve()
-SAVES_DIR = Path(os.environ.get("SAOVS_SAVES_DIR", SERVER_ROOT / "saves")).resolve()
 ADMIN_STATIC_DIR = Path(__file__).with_name("admin_static")
 CUSTOMIZER_STATIC_DIR = Path(__file__).with_name("customizer_static")
 CUSTOMIZER_CONTENT_DIR = Path(
@@ -158,17 +154,21 @@ CUSTOMIZER_PUBLIC_URL = os.environ.get(
 ABILITY_CATALOG_CACHE: dict[int, dict[str, object]] | None = None
 
 
-def resolve_content_root() -> Path:
+def content_root_candidates() -> list[Path]:
     configured = os.environ.get("SAOVS_CONTENT_ROOT")
     if configured:
-        return Path(configured).resolve()
+        return [Path(configured).resolve()]
 
-    candidates = [
+    return [
         SERVER_ROOT / "content" / "files",
         SERVER_ROOT / "content" / "SAOVS" / "data1" / "com.bandainamcoent.saovsww" / "files",
         SERVER_ROOT / "content" / "SAOVS" / "data1" / "com.bandaicoent.saovswww" / "files",
         SERVER_ROOT.parent / "SAOVS_Project" / "SAOVS" / "data1" / "com.bandainamcoent.saovsww" / "files",
     ]
+
+
+def resolve_content_root() -> Path:
+    candidates = content_root_candidates()
     for candidate in candidates:
         if (candidate / "sword.db").is_file():
             return candidate.resolve()
@@ -4796,7 +4796,35 @@ def health_asset_root_details() -> dict[str, object]:
     details["assetBase"] = SAOVS_ASSET_BASE
     details["assetHosts"] = sorted(SAOVS_ASSET_HOSTS)
     details["serveStaticUserListDb"] = SERVE_STATIC_USER_LIST_DB
+    details["contentSaovsRoot"] = str(SERVER_ROOT / "content" / "SAOVS")
+    details["contentSaovsExists"] = (SERVER_ROOT / "content" / "SAOVS").exists()
     return details
+
+
+def health_content_root_detection_details() -> dict[str, object]:
+    selected = SAVED_ANDROID_FILES.resolve()
+    configured = os.environ.get("SAOVS_CONTENT_ROOT", "")
+    candidates = []
+    for candidate in content_root_candidates():
+        resolved = candidate.resolve()
+        candidates.append(
+            {
+                "path": str(resolved),
+                "exists": resolved.exists(),
+                "isDir": resolved.is_dir(),
+                "hasSwordDb": (resolved / "sword.db").is_file(),
+                "hasUserListDb": (resolved / "user_list.db").is_file(),
+                "hasAddressables": (resolved / "com.unity.addressables").is_dir(),
+                "selected": resolved == selected,
+            }
+        )
+    return {
+        "ok": selected.exists() and (selected / "sword.db").is_file(),
+        "selected": str(selected),
+        "configured": configured,
+        "contentSaovsExpectedRoot": str(SERVER_ROOT / "content" / "SAOVS"),
+        "candidates": candidates,
+    }
 
 
 def health_asset_index_details() -> dict[str, object]:
@@ -4946,16 +4974,6 @@ def admin_health() -> Response:
 
 
 def build_full_health_payload() -> dict[str, object]:
-    def template_save_check() -> dict[str, object]:
-        details = health_path_details(TEMPLATE_SAVE_DIR)
-        details["ok"] = bool(details["exists"] and details["isDir"] and details["readable"])
-        return details
-
-    def saves_check() -> dict[str, object]:
-        details = health_path_details(SAVES_DIR)
-        details["ok"] = bool(details["exists"] and details["isDir"] and details["readable"])
-        return details
-
     checks = [
         health_check(
             "server",
@@ -4970,10 +4988,9 @@ def build_full_health_payload() -> dict[str, object]:
             },
         ),
         health_check("database", health_database_details),
-        health_check("template_save_folder", template_save_check),
-        health_check("saves_folder", saves_check),
         health_check("transfer_dependencies", health_transfer_details),
         health_check("assets_folder", health_asset_root_details),
+        health_check("content_root_detection", health_content_root_detection_details),
         health_check("asset_index", health_asset_index_details),
         health_check("known_small_asset_read", health_small_asset_read_details),
         health_check("asset_response_headers", health_asset_headers_details),
@@ -4995,8 +5012,7 @@ def build_full_health_payload() -> dict[str, object]:
             "assetIndexKeyCount": asset_index_details.get("keyCount", 0),
             "assetIndexBuiltAt": asset_index_details.get("builtAt"),
             "assetRoot": str(SAVED_ANDROID_FILES),
-            "templateSaveDir": str(TEMPLATE_SAVE_DIR),
-            "savesDir": str(SAVES_DIR),
+            "contentSaovsRoot": str(SERVER_ROOT / "content" / "SAOVS"),
         },
     }
 
