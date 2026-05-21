@@ -147,6 +147,7 @@ button {
   border-radius: 8px;
   background: transparent;
   color: var(--muted);
+  text-decoration: none;
   text-align: left;
   transition: background 160ms ease, color 160ms ease, border-color 160ms ease, transform 160ms ease;
 }
@@ -284,6 +285,7 @@ h3 {
   gap: 8px;
   padding: 0 14px;
   font-weight: 800;
+  text-decoration: none;
 }
 
 .btn.compact {
