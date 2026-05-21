@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SAOVS Full Health</title>
+  <link rel="icon" href="/admin/assets/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/admin/assets/full-health.css">
+</head>
+<body>
+  <main class="health-shell">
+    <header class="health-hero">
+      <div>
+        <a class="back-link" href="/admin">Command Deck</a>
+        <span class="eyebrow">SAOVS Stability Diagnostics</span>
+        <h1>Full Health</h1>
+        <p>Transfer, database, save folders, asset index, Range responses, and recent route errors in one live view.</p>
+      </div>
+      <div class="hero-actions">
+        <label class="token-field">
+          <span>Token</span>
+          <input id="tokenInput" type="password" autocomplete="off" placeholder="Admin token">
+        </label>
+        <button id="saveTokenBtn" class="btn secondary" type="button">Save</button>
+        <button id="refreshBtn" class="btn" type="button">Refresh</button>
+      </div>
+    </header>
+
+    <section class="status-board" aria-label="Health summary">
+      <article class="pulse-card primary">
+        <span class="label">System</span>
+        <strong id="overallStatus">Checking</strong>
+        <span id="checkedAt" class="muted">-</span>
+      </article>
+      <article class="pulse-card">
+        <span class="label">Uptime</span>
+        <strong id="uptimeValue">-</strong>
+        <span class="muted">process age</span>
+      </article>
+      <article class="pulse-card">
+        <span class="label">Sessions</span>
+        <strong id="sessionsValue">-</strong>
+        <span class="muted">active game / customizer</span>
+      </article>
+      <article class="pulse-card">
+        <span class="label">Asset Index</span>
+        <strong id="assetIndexValue">-</strong>
+        <span id="assetIndexMeta" class="muted">-</span>
+      </article>
+    </section>
+
+    <section class="diagnostic-grid">
+      <div>
+        <div class="section-head">
+          <span class="eyebrow">Route Checks</span>
+          <h2>Subsystem Status</h2>
+        </div>
+        <div id="checkList" class="check-list" aria-live="polite"></div>
+      </div>
+      <aside class="inspector">
+        <div class="section-head">
+          <span class="eyebrow">Inspector</span>
+          <h2 id="detailTitle">Select A Check</h2>
+        </div>
+        <pre id="detailBody" class="detail-body"></pre>
+      </aside>
+    </section>
+
+    <section class="error-grid" aria-label="Recent errors">
+      <article class="error-panel">
+        <div class="section-head">
+          <span class="eyebrow">Transfer</span>
+          <h2>Recent Transfer Errors</h2>
+        </div>
+        <div id="transferErrors" class="error-list"></div>
+      </article>
+      <article class="error-panel">
+        <div class="section-head">
+          <span class="eyebrow">Assets</span>
+          <h2>Recent Asset Errors</h2>
+        </div>
+        <div id="assetErrors" class="error-list"></div>
+      </article>
+    </section>
+  </main>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="/admin/assets/full-health.js" defer></script>
+</body>
+</html>

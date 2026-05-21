@@ -11,7 +11,11 @@ import os
 import secrets
 import smtplib
 import sqlite3
+import threading
+import time
+import traceback
 import uuid as uuidlib
+from collections import deque
 from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
 from html import escape
@@ -82,6 +86,13 @@ DEFAULT_USER_NAME = os.environ.get("SAOVS_DEFAULT_USER_NAME", "Kirito")
 BOOTSTRAP_LOGIN_PASSWORD = "adam"
 LOG_FILE = LOG_DIR / "saovs_private_server.log"
 REQUEST_DUMP_DIR = LOG_DIR / "request_bodies"
+SERVER_STARTED_AT = datetime.now(timezone.utc)
+SERVER_STARTED_PERF = time.perf_counter()
+RECENT_ERROR_LIMIT = int(os.environ.get("SAOVS_RECENT_ERROR_LIMIT", "50"))
+ROUTE_SLOW_SECONDS = float(os.environ.get("SAOVS_ROUTE_SLOW_SECONDS", "10"))
+SQLITE_TIMEOUT_SECONDS = float(os.environ.get("SAOVS_SQLITE_TIMEOUT_SECONDS", "10"))
+ASSET_INDEX_TTL_SECONDS = int(os.environ.get("SAOVS_ASSET_INDEX_TTL_SECONDS", "3600"))
+ASSET_MISS_REFRESH_COOLDOWN_SECONDS = int(os.environ.get("SAOVS_ASSET_MISS_REFRESH_COOLDOWN_SECONDS", "30"))
 ADMIN_STATIC_DIR = Path(__file__).with_name("admin_static")
 CUSTOMIZER_STATIC_DIR = Path(__file__).with_name("customizer_static")
 CUSTOMIZER_CONTENT_DIR = Path(
@@ -143,17 +154,21 @@ CUSTOMIZER_PUBLIC_URL = os.environ.get(
 ABILITY_CATALOG_CACHE: dict[int, dict[str, object]] | None = None
 
 
-def resolve_content_root() -> Path:
+def content_root_candidates() -> list[Path]:
     configured = os.environ.get("SAOVS_CONTENT_ROOT")
     if configured:
-        return Path(configured).resolve()
+        return [Path(configured).resolve()]
 
-    candidates = [
+    return [
         SERVER_ROOT / "content" / "files",
         SERVER_ROOT / "content" / "SAOVS" / "data1" / "com.bandainamcoent.saovsww" / "files",
         SERVER_ROOT / "content" / "SAOVS" / "data1" / "com.bandaicoent.saovswww" / "files",
         SERVER_ROOT.parent / "SAOVS_Project" / "SAOVS" / "data1" / "com.bandainamcoent.saovsww" / "files",
     ]
+
+
+def resolve_content_root() -> Path:
+    candidates = content_root_candidates()
     for candidate in candidates:
         if (candidate / "sword.db").is_file():
             return candidate.resolve()
@@ -209,6 +224,13 @@ parsed_asset_host = urlparse(SAOVS_ASSET_BASE).hostname
 if parsed_asset_host:
     SAOVS_ASSET_HOSTS.add(parsed_asset_host.lower())
 ASSET_FILE_INDEX: dict[str, Path] | None = None
+ASSET_FILE_INDEX_BUILT_AT: str | None = None
+ASSET_FILE_INDEX_BUILD_SECONDS: float | None = None
+ASSET_FILE_INDEX_BUILT_PERF: float | None = None
+ASSET_LAST_MISS_REFRESH_PERF: float | None = None
+ASSET_INDEX_LOCK = threading.Lock()
+RECENT_TRANSFER_ERRORS: deque[dict[str, object]] = deque(maxlen=RECENT_ERROR_LIMIT)
+RECENT_ASSET_ERRORS: deque[dict[str, object]] = deque(maxlen=RECENT_ERROR_LIMIT)
 OFFLINE_API_ROUTE_FILES = {
     "ability/index": "ability_index.json",
     "character/index": "character_index.json",
@@ -253,10 +275,79 @@ def emit_log(message: str = "") -> None:
     LOGGER.info(message)
 
 
+def utc_iso(value: datetime | None = None) -> str:
+    value = value or datetime.now(timezone.utc)
+    return value.isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def uptime_seconds() -> float:
+    return max(0.0, time.perf_counter() - SERVER_STARTED_PERF)
+
+
+def request_duration_ms() -> float | None:
+    started = getattr(g, "request_started_perf", None)
+    if started is None:
+        return None
+    return (time.perf_counter() - float(started)) * 1000.0
+
+
+def redact_token(value: object, keep: int = 6) -> str:
+    text = str(value or "")
+    if not text:
+        return ""
+    if len(text) <= keep * 2:
+        return f"{text[:2]}..."
+    return f"{text[:keep]}...{text[-keep:]}"
+
+
+def request_context_info() -> dict[str, object]:
+    try:
+        return {
+            "method": request.method,
+            "path": request.path,
+            "host": request.host,
+            "remoteAddr": request.headers.get("X-Forwarded-For", request.remote_addr or ""),
+            "range": request.headers.get("Range", ""),
+            "contentLength": request.headers.get("Content-Length", ""),
+        }
+    except RuntimeError:
+        return {}
+
+
+def format_exception_text(exc: Exception) -> str:
+    return "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)).strip()
+
+
+def record_recent_error(category: str, message: str, exc: Exception | None = None, **extra: object) -> None:
+    item: dict[str, object] = {
+        "at": utc_iso(),
+        "message": message,
+        **request_context_info(),
+        **extra,
+    }
+    if exc is not None:
+        item["exception"] = type(exc).__name__
+        item["traceback"] = format_exception_text(exc)
+
+    if category == "asset":
+        RECENT_ASSET_ERRORS.appendleft(item)
+    elif category == "transfer":
+        RECENT_TRANSFER_ERRORS.appendleft(item)
+
+
+def recent_errors(category: str) -> list[dict[str, object]]:
+    if category == "asset":
+        return list(RECENT_ASSET_ERRORS)
+    if category == "transfer":
+        return list(RECENT_TRANSFER_ERRORS)
+    return []
+
+
 def db_connect() -> sqlite3.Connection:
     DB_FILE.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(DB_FILE)
+    conn = sqlite3.connect(DB_FILE, timeout=SQLITE_TIMEOUT_SECONDS)
     conn.row_factory = sqlite3.Row
+    conn.execute(f"PRAGMA busy_timeout = {int(SQLITE_TIMEOUT_SECONDS * 1000)}")
     return conn
 
 
@@ -2741,42 +2832,72 @@ def asset_content_type(path: Path) -> str:
     return "application/octet-stream"
 
 
-def build_asset_file_index() -> dict[str, Path]:
-    global ASSET_FILE_INDEX
+def asset_file_index_is_fresh() -> bool:
+    if ASSET_FILE_INDEX is None:
+        return False
+    if ASSET_FILE_INDEX_BUILT_PERF is None or ASSET_INDEX_TTL_SECONDS <= 0:
+        return True
+    return time.perf_counter() - ASSET_FILE_INDEX_BUILT_PERF < ASSET_INDEX_TTL_SECONDS
 
-    if ASSET_FILE_INDEX is not None:
+
+def build_asset_file_index() -> dict[str, Path]:
+    global ASSET_FILE_INDEX, ASSET_FILE_INDEX_BUILT_AT, ASSET_FILE_INDEX_BUILD_SECONDS, ASSET_FILE_INDEX_BUILT_PERF
+
+    if asset_file_index_is_fresh():
         return ASSET_FILE_INDEX
 
-    index: dict[str, Path] = {}
-    if not SAVED_ANDROID_FILES.exists():
-        emit_log(f"[ASSET] saved Android files directory missing: {SAVED_ANDROID_FILES}")
+    with ASSET_INDEX_LOCK:
+        if asset_file_index_is_fresh():
+            return ASSET_FILE_INDEX
+
+        if ASSET_FILE_INDEX is not None and ASSET_FILE_INDEX_BUILT_PERF is not None:
+            emit_log(
+                f"[ASSET] refreshing asset lookup index after "
+                f"{time.perf_counter() - ASSET_FILE_INDEX_BUILT_PERF:.1f}s"
+            )
+
+        started = time.perf_counter()
+        index: dict[str, Path] = {}
+        if not SAVED_ANDROID_FILES.exists():
+            emit_log(f"[ASSET] saved Android files directory missing: {SAVED_ANDROID_FILES}")
+            ASSET_FILE_INDEX = index
+            ASSET_FILE_INDEX_BUILT_AT = utc_iso()
+            ASSET_FILE_INDEX_BUILD_SECONDS = time.perf_counter() - started
+            ASSET_FILE_INDEX_BUILT_PERF = time.perf_counter()
+            return index
+
+        for path in SAVED_ANDROID_FILES.rglob("*"):
+            if not path.is_file():
+                continue
+
+            rel = path.relative_to(SAVED_ANDROID_FILES).as_posix()
+            keys = {
+                rel.lower(),
+                path.name.lower(),
+            }
+
+            if path.name == "__data" and path.parent.name:
+                cache_hash = path.parent.name.lower()
+                keys.add(cache_hash)
+                keys.add(f"{cache_hash}.bundle")
+
+            for key in keys:
+                index.setdefault(key, path)
+
+        ASSET_FILE_INDEX_BUILT_AT = utc_iso()
+        ASSET_FILE_INDEX_BUILD_SECONDS = time.perf_counter() - started
+        ASSET_FILE_INDEX_BUILT_PERF = time.perf_counter()
+        emit_log(
+            f"[ASSET] indexed {len(index)} asset lookup keys from {SAVED_ANDROID_FILES} "
+            f"in {ASSET_FILE_INDEX_BUILD_SECONDS:.3f}s"
+        )
         ASSET_FILE_INDEX = index
         return index
 
-    for path in SAVED_ANDROID_FILES.rglob("*"):
-        if not path.is_file():
-            continue
-
-        rel = path.relative_to(SAVED_ANDROID_FILES).as_posix()
-        keys = {
-            rel.lower(),
-            path.name.lower(),
-        }
-
-        if path.name == "__data" and path.parent.name:
-            cache_hash = path.parent.name.lower()
-            keys.add(cache_hash)
-            keys.add(f"{cache_hash}.bundle")
-
-        for key in keys:
-            index.setdefault(key, path)
-
-    emit_log(f"[ASSET] indexed {len(index)} asset lookup keys from {SAVED_ANDROID_FILES}")
-    ASSET_FILE_INDEX = index
-    return index
-
 
 def resolve_asset_file(path: str) -> Path | None:
+    global ASSET_FILE_INDEX, ASSET_LAST_MISS_REFRESH_PERF
+
     clean_path = unquote(path).split("?", 1)[0].replace("\\", "/").lstrip("/")
     parts = [part for part in clean_path.split("/") if part and part != "."]
     variants: list[str] = []
@@ -2798,6 +2919,26 @@ def resolve_asset_file(path: str) -> Path | None:
         if matched and matched.exists():
             return matched
 
+    now_perf = time.perf_counter()
+    can_refresh_after_miss = (
+        ASSET_LAST_MISS_REFRESH_PERF is None
+        or now_perf - ASSET_LAST_MISS_REFRESH_PERF >= ASSET_MISS_REFRESH_COOLDOWN_SECONDS
+    )
+    if ASSET_FILE_INDEX is not None and can_refresh_after_miss:
+        emit_log(f"[ASSET] refreshing asset lookup index after miss for /{clean_path}")
+        ASSET_LAST_MISS_REFRESH_PERF = now_perf
+        ASSET_FILE_INDEX = None
+        index = build_asset_file_index()
+        for variant in variants:
+            matched = index.get(variant.lower())
+            if matched and matched.exists():
+                return matched
+    elif ASSET_FILE_INDEX is not None:
+        emit_log(
+            f"[ASSET] skipped miss-triggered index refresh for /{clean_path}; "
+            f"cooldown={ASSET_MISS_REFRESH_COOLDOWN_SECONDS}s"
+        )
+
     return None
 
 
@@ -2805,28 +2946,84 @@ def serve_asset_file(path: str) -> Response | None:
     if not is_asset_host():
         return None
 
-    asset_path = resolve_asset_file(path)
-    if asset_path is None:
-        emit_log(f"[ASSET] missing asset file for /{path}")
-        return Response("asset not found", status=404, mimetype="text/plain")
-
-    rel = asset_path.relative_to(SAVED_ANDROID_FILES).as_posix()
-    if asset_path.name.lower() == "user_list.db" and not SERVE_STATIC_USER_LIST_DB:
-        emit_log(
-            "[ASSET] skipped bundled user_list.db; dynamic account payloads are authoritative "
-            "(set SAOVS_SERVE_STATIC_USER_LIST_DB=1 to serve it)"
-        )
-        return Response("asset disabled", status=404, mimetype="text/plain")
-
-    emit_log(f"[ASSET] serving /{path} from {rel} ({asset_path.stat().st_size} bytes)")
-    return send_file(
-        asset_path,
-        mimetype=asset_content_type(asset_path),
-        as_attachment=False,
-        conditional=True,
-        etag=True,
-        max_age=0,
+    started = time.perf_counter()
+    range_header = request.headers.get("Range", "")
+    emit_log(
+        f"[ASSET REQUEST] method={request.method} path=/{path} host={request.host} "
+        f"range={range_header or '-'} if_none_match={request.headers.get('If-None-Match', '-')}"
     )
+    try:
+        asset_path = resolve_asset_file(path)
+        if asset_path is None:
+            emit_log(f"[ASSET] missing asset file for /{path}")
+            record_recent_error(
+                "asset",
+                "asset file not found",
+                requestedPath=f"/{path}",
+                assetRoot=str(SAVED_ANDROID_FILES),
+            )
+            return Response("asset not found", status=404, mimetype="text/plain")
+
+        rel = asset_path.relative_to(SAVED_ANDROID_FILES).as_posix()
+        exists = asset_path.exists()
+        is_file = asset_path.is_file()
+        stat = asset_path.stat() if exists else None
+        emit_log(
+            f"[ASSET RESOLVE] requested=/{path} file={rel} exists={exists} "
+            f"is_file={is_file} size={(stat.st_size if stat else 'missing')} "
+            f"mtime={(datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat() if stat else '-')}"
+        )
+
+        if asset_path.name.lower() == "user_list.db" and not SERVE_STATIC_USER_LIST_DB:
+            emit_log(
+                "[ASSET] skipped bundled user_list.db; dynamic account payloads are authoritative "
+                "(set SAOVS_SERVE_STATIC_USER_LIST_DB=1 to serve it)"
+            )
+            return Response("asset disabled", status=404, mimetype="text/plain")
+
+        if not exists or not is_file:
+            record_recent_error(
+                "asset",
+                "resolved asset path is missing or not a file",
+                requestedPath=f"/{path}",
+                resolvedPath=str(asset_path),
+                exists=exists,
+                isFile=is_file,
+            )
+            return Response("asset not found", status=404, mimetype="text/plain")
+
+        mimetype = asset_content_type(asset_path)
+        response = send_file(
+            asset_path,
+            mimetype=mimetype,
+            as_attachment=False,
+            conditional=True,
+            etag=True,
+            max_age=0,
+        )
+        emit_log(
+            f"[ASSET RESPONSE READY] requested=/{path} file={rel} mimetype={mimetype} "
+            f"content_length={response.content_length or response.headers.get('Content-Length', '-')} "
+            f"accept_ranges={response.headers.get('Accept-Ranges', '-')} "
+            f"conditional=True direct_passthrough={response.direct_passthrough}"
+        )
+
+        def log_asset_close() -> None:
+            elapsed_ms = (time.perf_counter() - started) * 1000.0
+            emit_log(f"[ASSET RESPONSE CLOSED] requested=/{path} file={rel} duration_ms={elapsed_ms:.1f}")
+
+        response.call_on_close(log_asset_close)
+        return response
+    except Exception as exc:
+        LOGGER.exception("[ASSET ERROR] failed to serve asset")
+        record_recent_error(
+            "asset",
+            "asset route exception",
+            exc,
+            requestedPath=f"/{path}",
+            assetRoot=str(SAVED_ANDROID_FILES),
+        )
+        return Response("asset server error", status=500, mimetype="text/plain")
 
 
 def pkcs7_unpad(data: bytes) -> bytes:
@@ -3117,11 +3314,31 @@ def wants_saovs_frame() -> bool:
     )
 
 
+@app.before_request
+def mark_request_start() -> None:
+    g.request_started_perf = time.perf_counter()
+    g.request_started_at = utc_iso()
+
+
 @app.after_request
 def log_response(response: Response) -> Response:
     if getattr(g, "skip_response_log", False) or request.path.startswith("/admin") or request.path == "/favicon.ico":
         return response
-    emit_log(f"[RESPONSE] {request.method} {request.path} -> {response.status_code}")
+
+    elapsed_ms = request_duration_ms()
+    content_length = response.headers.get("Content-Length") or response.content_length or "-"
+    range_header = request.headers.get("Range", "")
+    route_label = "asset" if is_asset_host() else ("transfer" if "transfer" in request.path.lower() else "route")
+    duration_text = f"{elapsed_ms:.1f}ms" if elapsed_ms is not None else "-"
+    emit_log(
+        f"[RESPONSE] type={route_label} {request.method} {request.path} -> {response.status_code} "
+        f"duration={duration_text} content_length={content_length} range={range_header or '-'}"
+    )
+    if elapsed_ms is not None and elapsed_ms >= ROUTE_SLOW_SECONDS * 1000.0:
+        emit_log(
+            f"[SLOW ROUTE] type={route_label} {request.method} {request.path} "
+            f"duration={duration_text} threshold={ROUTE_SLOW_SECONDS:.1f}s"
+        )
     return response
 
 
@@ -3133,9 +3350,17 @@ def log_exception(error: Exception) -> Response | tuple[Response, int]:
         if request.path.startswith("/admin"):
             return jsonify({"statusCode": 10001, "error": error.description}), error.code or 500
         emit_log(f"[HTTP ERROR] {request.method} {request.path} -> {error.code} {error.description}")
+        if is_asset_host():
+            record_recent_error("asset", f"http error {error.code}: {error.description}")
+        elif "transfer" in request.path.lower():
+            record_recent_error("transfer", f"http error {error.code}: {error.description}")
         return jsonify({"statusCode": 10001, "error": error.description}), error.code or 500
 
     LOGGER.exception("[EXCEPTION] Unhandled server error")
+    if is_asset_host():
+        record_recent_error("asset", "unhandled asset exception", error)
+    elif "transfer" in request.path.lower():
+        record_recent_error("transfer", "unhandled transfer exception", error)
     return jsonify({"statusCode": 10001, "error": "debug server exception"}), 500
 
 
@@ -4004,56 +4229,96 @@ def bootstrap_payload_for_path(path: str) -> dict[str, object] | None:
     return None
 
 
+def transfer_context_summary(
+    auth_code: object = "",
+    platform_user_id: str = "",
+    user: dict[str, object] | None = None,
+) -> dict[str, object]:
+    return {
+        "requestKey": current_saovs_request_key(),
+        "requestSession": redact_token(current_saovs_header_value("session", "")),
+        "platformUserId": platform_user_id,
+        "authCodePresent": bool(str(auth_code or "").strip()),
+        "authCodePrefix": redact_token(auth_code),
+        "wantsFrame": wants_saovs_frame(),
+        "userId": int(user["id"]) if user and user.get("id") is not None else "",
+        "uuid": str(user["uuid"]) if user and user.get("uuid") is not None else "",
+    }
+
+
+def transfer_error_response(error: str, http_status: int = 500) -> Response | tuple[Response, int]:
+    if wants_saovs_frame():
+        try:
+            return make_saovs_frame_response({}, status=10001, session="")
+        except Exception as exc:
+            LOGGER.exception("[TRANSFER ERROR] failed to build encrypted error frame")
+            record_recent_error("transfer", "failed to build transfer error frame", exc)
+    return jsonify({"statusCode": 10001, "error": error}), http_status
+
+
 @app.route("/transfer/executeBNID", methods=["GET", "POST"])
 @app.route("/api/local/saovs/transfer/executeBNID", methods=["GET", "POST"])
 def transfer_execute_bnid() -> Response:
-    log_request()
-    payload_in = current_saovs_payload() or {}
-    auth_code = (
-        payload_in.get("authenticationCode")
-        or payload_in.get("auth_code")
-        or payload_in.get("code")
-        or request.args.get("authenticationCode")
-        or request.args.get("auth_code")
-        or request.args.get("code")
-        or ""
-    )
-    platform_user_id = current_platform_user_id()
-    user = redeem_auth_code(str(auth_code), platform_user_id)
-    if user is None:
-        emit_log("[AUTH] transfer/executeBNID rejected missing or invalid auth code")
-        if wants_saovs_frame():
-            return make_saovs_frame_response({}, status=10001)
-        return jsonify({"statusCode": 10001, "error": "Invalid or expired auth code"}), 401
+    try:
+        log_request()
+        payload_in = current_saovs_payload() or {}
+        auth_code = (
+            payload_in.get("authenticationCode")
+            or payload_in.get("auth_code")
+            or payload_in.get("code")
+            or request.args.get("authenticationCode")
+            or request.args.get("auth_code")
+            or request.args.get("code")
+            or ""
+        )
+        platform_user_id = current_platform_user_id()
+        emit_log(f"[TRANSFER] executeBNID begin {json.dumps(transfer_context_summary(auth_code, platform_user_id))}")
+        user = redeem_auth_code(str(auth_code), platform_user_id)
+        if user is None:
+            context = transfer_context_summary(auth_code, platform_user_id)
+            emit_log(f"[AUTH] transfer/executeBNID rejected missing or invalid auth code {json.dumps(context)}")
+            record_recent_error("transfer", "missing or invalid transfer auth code", **context)
+            return transfer_error_response("Invalid or expired auth code", 401)
 
-    link_device_to_user(platform_user_id, int(user["id"]), str(user["uuid"]))
-    payload = {
-        "uuid": str(user["uuid"]),
-        "userCode": str(user["user_code"]),
-        "userId": int(user["id"]),
-        "playerId": int(user["id"]),
-        "id": int(user["id"]),
-    }
-    if wants_saovs_frame():
-        return make_saovs_frame_response(payload)
-
-    # This is only a JSON-shaped probe. The real client may expect the normal
-    # SAOVS encrypted MessagePack frame before it accepts this response.
-    return jsonify(
-        {
-            "statusCode": 10000,
-            "response": payload,
+        link_device_to_user(platform_user_id, int(user["id"]), str(user["uuid"]))
+        payload = {
+            "uuid": str(user["uuid"]),
+            "userCode": str(user["user_code"]),
+            "userId": int(user["id"]),
+            "playerId": int(user["id"]),
+            "id": int(user["id"]),
         }
-    )
+        emit_log(f"[TRANSFER] executeBNID success {json.dumps(transfer_context_summary(auth_code, platform_user_id, user))}")
+        if wants_saovs_frame():
+            return make_saovs_frame_response(payload)
+
+        # This is only a JSON-shaped probe. The real client may expect the normal
+        # SAOVS encrypted MessagePack frame before it accepts this response.
+        return jsonify(
+            {
+                "statusCode": 10000,
+                "response": payload,
+            }
+        )
+    except Exception as exc:
+        LOGGER.exception("[TRANSFER ERROR] executeBNID failed")
+        record_recent_error("transfer", "transfer/executeBNID exception", exc)
+        return transfer_error_response("Transfer failed", 500)
 
 
 @app.route("/transfer/setBNID", methods=["GET", "POST"])
 @app.route("/api/local/saovs/transfer/setBNID", methods=["GET", "POST"])
 def transfer_set_bnid() -> Response:
-    log_request()
-    if wants_saovs_frame():
-        return make_saovs_frame_response({})
-    return jsonify({"statusCode": 10000, "response": {}})
+    try:
+        log_request()
+        emit_log(f"[TRANSFER] setBNID {json.dumps(transfer_context_summary(platform_user_id=current_platform_user_id()))}")
+        if wants_saovs_frame():
+            return make_saovs_frame_response({})
+        return jsonify({"statusCode": 10000, "response": {}})
+    except Exception as exc:
+        LOGGER.exception("[TRANSFER ERROR] setBNID failed")
+        record_recent_error("transfer", "transfer/setBNID exception", exc)
+        return transfer_error_response("Transfer setup failed", 500)
 
 
 def render_customizer_app() -> Response:
@@ -4392,6 +4657,303 @@ def admin_api_clear_logs() -> Response:
     )
 
 
+def health_path_details(path: Path) -> dict[str, object]:
+    exists = path.exists()
+    return {
+        "path": str(path),
+        "exists": exists,
+        "isDir": path.is_dir() if exists else False,
+        "isFile": path.is_file() if exists else False,
+        "readable": os.access(path, os.R_OK) if exists else False,
+        "writable": os.access(path, os.W_OK) if exists else False,
+    }
+
+
+def health_check(name: str, check_func) -> dict[str, object]:
+    started = time.perf_counter()
+    try:
+        details = check_func()
+        ok = bool(details.pop("ok", True)) if isinstance(details, dict) else bool(details)
+        return {
+            "name": name,
+            "ok": ok,
+            "durationMs": round((time.perf_counter() - started) * 1000.0, 1),
+            "details": details if isinstance(details, dict) else {"value": details},
+        }
+    except Exception as exc:
+        return {
+            "name": name,
+            "ok": False,
+            "durationMs": round((time.perf_counter() - started) * 1000.0, 1),
+            "error": str(exc),
+            "exception": type(exc).__name__,
+            "traceback": format_exception_text(exc),
+        }
+
+
+def health_database_details() -> dict[str, object]:
+    now = utc_text()
+    active_session_window = f"-{SESSION_ACTIVE_SECONDS} seconds"
+    customizer_window = f"-{CUSTOMIZER_SESSION_TTL_SECONDS} seconds"
+    with db_connect() as conn:
+        conn.execute("SELECT 1").fetchone()
+        sessions_total = int(conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0])
+        sessions_active = int(
+            conn.execute(
+                "SELECT COUNT(*) FROM sessions WHERE datetime(last_seen_at) >= datetime('now', ?)",
+                (active_session_window,),
+            ).fetchone()[0]
+        )
+        customizer_sessions_total = int(conn.execute("SELECT COUNT(*) FROM customizer_sessions").fetchone()[0])
+        customizer_sessions_active = int(
+            conn.execute(
+                "SELECT COUNT(*) FROM customizer_sessions WHERE datetime(last_seen_at) >= datetime('now', ?)",
+                (customizer_window,),
+            ).fetchone()[0]
+        )
+        pending_auth_codes = int(
+            conn.execute(
+                """
+                SELECT COUNT(*)
+                FROM auth_codes
+                WHERE redeemed_at IS NULL AND expires_at >= ?
+                """,
+                (now,),
+            ).fetchone()[0]
+        )
+        expired_auth_codes = int(
+            conn.execute(
+                """
+                SELECT COUNT(*)
+                FROM auth_codes
+                WHERE redeemed_at IS NULL AND expires_at < ?
+                """,
+                (now,),
+            ).fetchone()[0]
+        )
+        players = int(conn.execute("SELECT COUNT(*) FROM users").fetchone()[0])
+        logins = int(conn.execute("SELECT COUNT(*) FROM login_users").fetchone()[0])
+
+    return {
+        "ok": True,
+        "database": str(DB_FILE),
+        "sqliteTimeoutSeconds": SQLITE_TIMEOUT_SECONDS,
+        "players": players,
+        "loginUsers": logins,
+        "sessionsTotal": sessions_total,
+        "sessionsActive": sessions_active,
+        "customizerSessionsTotal": customizer_sessions_total,
+        "customizerSessionsActive": customizer_sessions_active,
+        "pendingAuthCodes": pending_auth_codes,
+        "expiredAuthCodes": expired_auth_codes,
+    }
+
+
+def find_known_small_asset() -> Path | None:
+    candidates = [
+        f"com.unity.addressables/catalog_{SAOVS_ASSET_VER}os.hash",
+        f"catalog_{SAOVS_ASSET_VER}os.hash",
+        "OfflineApi/user_login.json",
+        "user_login.json",
+        "com.unity.addressables/catalog_30000os.hash",
+        "catalog_30000os.hash",
+    ]
+    for candidate in candidates:
+        path = resolve_asset_file(candidate)
+        if path and path.is_file() and path.stat().st_size <= 1024 * 1024:
+            return path
+    return None
+
+
+def find_manifest_asset() -> Path | None:
+    candidates = [
+        f"com.unity.addressables/catalog_{SAOVS_ASSET_VER}os.json",
+        f"catalog_{SAOVS_ASSET_VER}os.json",
+        f"com.unity.addressables/catalog_{SAOVS_ASSET_VER}os.hash",
+        f"catalog_{SAOVS_ASSET_VER}os.hash",
+        "com.unity.addressables/catalog_30000os.json",
+        "catalog_30000os.json",
+        "com.unity.addressables/catalog_30000os.hash",
+        "catalog_30000os.hash",
+    ]
+    for candidate in candidates:
+        path = resolve_asset_file(candidate)
+        if path and path.is_file():
+            return path
+    return None
+
+
+def asset_relative(path: Path) -> str:
+    try:
+        return path.relative_to(SAVED_ANDROID_FILES).as_posix()
+    except ValueError:
+        return str(path)
+
+
+def health_asset_root_details() -> dict[str, object]:
+    details = health_path_details(SAVED_ANDROID_FILES)
+    details["ok"] = bool(details["exists"] and details["isDir"] and details["readable"])
+    details["assetBase"] = SAOVS_ASSET_BASE
+    details["assetHosts"] = sorted(SAOVS_ASSET_HOSTS)
+    details["serveStaticUserListDb"] = SERVE_STATIC_USER_LIST_DB
+    details["contentSaovsRoot"] = str(SERVER_ROOT / "content" / "SAOVS")
+    details["contentSaovsExists"] = (SERVER_ROOT / "content" / "SAOVS").exists()
+    return details
+
+
+def health_content_root_detection_details() -> dict[str, object]:
+    selected = SAVED_ANDROID_FILES.resolve()
+    configured = os.environ.get("SAOVS_CONTENT_ROOT", "")
+    candidates = []
+    for candidate in content_root_candidates():
+        resolved = candidate.resolve()
+        candidates.append(
+            {
+                "path": str(resolved),
+                "exists": resolved.exists(),
+                "isDir": resolved.is_dir(),
+                "hasSwordDb": (resolved / "sword.db").is_file(),
+                "hasUserListDb": (resolved / "user_list.db").is_file(),
+                "hasAddressables": (resolved / "com.unity.addressables").is_dir(),
+                "selected": resolved == selected,
+            }
+        )
+    return {
+        "ok": selected.exists() and (selected / "sword.db").is_file(),
+        "selected": str(selected),
+        "configured": configured,
+        "contentSaovsExpectedRoot": str(SERVER_ROOT / "content" / "SAOVS"),
+        "candidates": candidates,
+    }
+
+
+def health_asset_index_details() -> dict[str, object]:
+    index = build_asset_file_index()
+    age_seconds = (
+        round(time.perf_counter() - ASSET_FILE_INDEX_BUILT_PERF, 1)
+        if ASSET_FILE_INDEX_BUILT_PERF is not None
+        else None
+    )
+    return {
+        "ok": SAVED_ANDROID_FILES.exists() and len(index) > 0,
+        "loaded": ASSET_FILE_INDEX is not None,
+        "keyCount": len(index),
+        "builtAt": ASSET_FILE_INDEX_BUILT_AT,
+        "buildSeconds": ASSET_FILE_INDEX_BUILD_SECONDS,
+        "ageSeconds": age_seconds,
+        "ttlSeconds": ASSET_INDEX_TTL_SECONDS,
+        "missRefreshCooldownSeconds": ASSET_MISS_REFRESH_COOLDOWN_SECONDS,
+        "root": str(SAVED_ANDROID_FILES),
+    }
+
+
+def health_small_asset_read_details() -> dict[str, object]:
+    path = find_known_small_asset()
+    if path is None:
+        return {
+            "ok": False,
+            "error": "No known small asset was found.",
+        }
+
+    stat = path.stat()
+    with path.open("rb") as handle:
+        sample = handle.read(64)
+    return {
+        "ok": True,
+        "path": asset_relative(path),
+        "size": stat.st_size,
+        "contentType": asset_content_type(path),
+        "sampleBytes": len(sample),
+        "fileHandleClosed": handle.closed,
+    }
+
+
+def health_manifest_details() -> dict[str, object]:
+    path = find_manifest_asset()
+    if path is None:
+        return {
+            "ok": False,
+            "error": "No Unity Addressables catalog hash/json file was found.",
+        }
+
+    stat = path.stat()
+    details: dict[str, object] = {
+        "ok": True,
+        "path": asset_relative(path),
+        "size": stat.st_size,
+        "contentType": asset_content_type(path),
+    }
+    if path.suffix.lower() == ".json":
+        with path.open("r", encoding="utf-8") as handle:
+            manifest = json.load(handle)
+        details["jsonLoaded"] = True
+        if isinstance(manifest, dict):
+            details["locatorId"] = manifest.get("m_LocatorId", "")
+            details["internalIdCount"] = len(manifest.get("m_InternalIds", [])) if isinstance(manifest.get("m_InternalIds"), list) else ""
+    else:
+        with path.open("rb") as handle:
+            details["hashBytes"] = len(handle.read(128))
+    return details
+
+
+def health_asset_headers_details() -> dict[str, object]:
+    path = find_known_small_asset()
+    if path is None:
+        return {
+            "ok": False,
+            "error": "No known small asset was found for header generation.",
+        }
+
+    rel = asset_relative(path)
+    asset_host = sorted(SAOVS_ASSET_HOSTS)[0] if SAOVS_ASSET_HOSTS else "assets-os-login-lab.saovs.com"
+    with app.test_request_context(f"/{quote(rel, safe='/')}", method="GET", headers={"Host": asset_host, "Range": "bytes=0-0"}):
+        g.request_started_perf = time.perf_counter()
+        response = serve_asset_file(rel)
+        if response is None:
+            return {"ok": False, "error": "Asset route did not handle the known asset."}
+        details = {
+            "ok": response.status_code in {200, 206, 304},
+            "path": rel,
+            "status": response.status_code,
+            "contentLength": response.headers.get("Content-Length", ""),
+            "contentRange": response.headers.get("Content-Range", ""),
+            "acceptRanges": response.headers.get("Accept-Ranges", ""),
+            "etag": bool(response.headers.get("ETag")),
+            "cacheControl": response.headers.get("Cache-Control", ""),
+            "rangeRequestUsed": True,
+            "directPassthrough": response.direct_passthrough,
+        }
+        response.close()
+        details["responseClosed"] = True
+        return details
+
+
+def health_transfer_details() -> dict[str, object]:
+    route_names = {
+        "transfer_execute_bnid": "transfer_execute_bnid" in app.view_functions,
+        "transfer_set_bnid": "transfer_set_bnid" in app.view_functions,
+        "catch_all": "catch_all" in app.view_functions,
+    }
+    with app.test_request_context("/transfer/setBNID", method="GET"):
+        g.request_started_perf = time.perf_counter()
+        response = transfer_set_bnid()
+        status_code = response.status_code
+        response.close()
+    return {
+        "ok": all(route_names.values()) and status_code == 200,
+        "routes": route_names,
+        "setBNIDProbeStatus": status_code,
+        "authCodeTtlSeconds": AUTH_CODE_TTL_SECONDS,
+        "sessionActiveSeconds": SESSION_ACTIVE_SECONDS,
+        "cryptoKeys": {
+            "oldKeyBytes": len(SAOVS_OLD_KEY),
+            "oldIvBytes": len(SAOVS_OLD_IV),
+            "newKeyBytes": len(SAOVS_NEW_KEY),
+            "newIvBytes": len(SAOVS_NEW_IV),
+        },
+    }
+
+
 @app.route("/admin/health", methods=["GET"])
 def admin_health() -> Response:
     require_admin()
@@ -4409,6 +4971,68 @@ def admin_health() -> Response:
             "relativeAuthResultOrigin": os.environ.get("SAOVS_RELATIVE_AUTH_RESULT_ORIGIN", ""),
         }
     )
+
+
+def build_full_health_payload() -> dict[str, object]:
+    checks = [
+        health_check(
+            "server",
+            lambda: {
+                "ok": True,
+                "startedAt": utc_iso(SERVER_STARTED_AT),
+                "uptimeSeconds": round(uptime_seconds(), 1),
+                "serverRoot": str(SERVER_ROOT),
+                "logFile": str(LOG_FILE),
+                "logFileExists": LOG_FILE.exists(),
+                "routeSlowSeconds": ROUTE_SLOW_SECONDS,
+            },
+        ),
+        health_check("database", health_database_details),
+        health_check("transfer_dependencies", health_transfer_details),
+        health_check("assets_folder", health_asset_root_details),
+        health_check("content_root_detection", health_content_root_detection_details),
+        health_check("asset_index", health_asset_index_details),
+        health_check("known_small_asset_read", health_small_asset_read_details),
+        health_check("asset_response_headers", health_asset_headers_details),
+        health_check("manifest_or_index_load", health_manifest_details),
+    ]
+    db_details = next((item.get("details", {}) for item in checks if item.get("name") == "database"), {})
+    asset_index_details = next((item.get("details", {}) for item in checks if item.get("name") == "asset_index"), {})
+    return {
+        "ok": all(bool(item.get("ok")) for item in checks),
+        "checkedAt": utc_iso(),
+        "uptimeSeconds": round(uptime_seconds(), 1),
+        "checks": checks,
+        "debug": {
+            "activeSessionsCount": db_details.get("sessionsActive", 0),
+            "activeCustomizerSessionsCount": db_details.get("customizerSessionsActive", 0),
+            "recentTransferErrors": recent_errors("transfer"),
+            "recentAssetErrors": recent_errors("asset"),
+            "assetIndexLoaded": asset_index_details.get("loaded", False),
+            "assetIndexKeyCount": asset_index_details.get("keyCount", 0),
+            "assetIndexBuiltAt": asset_index_details.get("builtAt"),
+            "assetRoot": str(SAVED_ANDROID_FILES),
+            "contentSaovsRoot": str(SERVER_ROOT / "content" / "SAOVS"),
+        },
+    }
+
+
+@app.route("/admin/api/full-health", methods=["GET"])
+def admin_api_full_health() -> Response:
+    require_admin()
+    return jsonify(build_full_health_payload())
+
+
+@app.route("/admin/full-health", methods=["GET"])
+def admin_full_health() -> Response:
+    require_admin()
+    wants_json = (
+        request.args.get("format") == "json"
+        or request.accept_mimetypes.best_match(["text/html", "application/json"]) == "application/json"
+    )
+    if wants_json:
+        return jsonify(build_full_health_payload())
+    return send_file(ADMIN_STATIC_DIR / "full-health.html", mimetype="text/html")
 
 
 @app.route("/admin/users", methods=["GET"])
