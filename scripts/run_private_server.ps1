@@ -193,7 +193,7 @@ if ([string]::IsNullOrWhiteSpace($env:SAOVS_PUBLIC_API_BASE)) {
     $env:SAOVS_PUBLIC_API_BASE = "https://api-os-login-lab.saovs.com/"
 }
 if ([string]::IsNullOrWhiteSpace($env:SAOVS_PUBLIC_LOGIN_BASE)) {
-    $env:SAOVS_PUBLIC_LOGIN_BASE = "https://saovs.com/"
+    $env:SAOVS_PUBLIC_LOGIN_BASE = $AuthResultOrigin
 }
 
 Write-Host "SAOVS private server"
