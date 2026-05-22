@@ -69,8 +69,9 @@ powershell -ExecutionPolicy Bypass -File scripts\run_private_server.ps1 `
   -KeyFile "C:\SAOVS_PS\certs\public-saovs\privkey.pem"
 ```
 
-The local dev runner uses `content/files` by default. On this machine that path
-is a junction to Adam's existing working content folder:
+The runner accepts either the top-level `content/SAOVS` folder or the inner
+Android `files` folder that contains `sword.db`. On this machine the local
+fallback points to Adam's existing working content folder:
 
 ```text
 C:\Users\Adam\SAOVS_Project\SAOVS\data1\com.bandainamcoent.saovsww\files
@@ -81,6 +82,14 @@ Check health:
 ```powershell
 curl.exe -u admin:admin http://127.0.0.1:8000/admin/health
 curl.exe -u admin:admin http://127.0.0.1:8000/admin/users
+```
+
+The full-health page also probes the real public game domains, not only the
+local Flask process. This matters on VPS because the browser dashboard may be
+served by the HTTP process while the game uses the HTTPS API/asset process:
+
+```text
+http://127.0.0.1:8000/admin/full-health
 ```
 
 Open the admin dashboard:
@@ -134,6 +143,8 @@ Useful admin routes:
 ```text
 GET  /admin
 GET  /admin/health
+GET  /admin/full-health
+GET  /admin/api/full-health
 GET  /admin/users
 GET  /admin/api/logs?limit=250
 POST /admin/api/logs/clear
@@ -141,6 +152,12 @@ POST /admin/api/logs/clear
 
 Log in with `SAOVS_ADMIN_USERNAME` and `SAOVS_ADMIN_PASSWORD`. If
 `SAOVS_ADMIN_TOKEN` is set, scripts can still pass it via `X-Admin-Token`.
+
+The PowerShell runner defaults to `SAOVS_SERVER_BACKEND=cheroot`, a production
+WSGI server with a fixed thread pool. This is more reliable than Flask's
+development server for long-lived HTTPS and multi-gigabyte asset downloads.
+After pulling this branch on a VPS, run `python -m pip install -r requirements.txt`
+once so `cheroot` is installed.
 
 ## Player Equipment Customizer
 

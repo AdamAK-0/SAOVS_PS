@@ -95,6 +95,10 @@ ASSET_INDEX_TTL_SECONDS = int(os.environ.get("SAOVS_ASSET_INDEX_TTL_SECONDS", "3
 ASSET_MISS_REFRESH_COOLDOWN_SECONDS = int(os.environ.get("SAOVS_ASSET_MISS_REFRESH_COOLDOWN_SECONDS", "30"))
 TRANSFER_FLOW_WINDOW_SECONDS = int(os.environ.get("SAOVS_TRANSFER_FLOW_WINDOW_SECONDS", "900"))
 TRANSFER_STUCK_SETBNID_COUNT = int(os.environ.get("SAOVS_TRANSFER_STUCK_SETBNID_COUNT", "3"))
+PUBLIC_PROBE_TIMEOUT_SECONDS = float(os.environ.get("SAOVS_PUBLIC_PROBE_TIMEOUT_SECONDS", "8"))
+SERVER_BACKEND = os.environ.get("SAOVS_SERVER_BACKEND", "auto").strip().lower()
+SERVER_THREADS = int(os.environ.get("SAOVS_SERVER_THREADS", "40"))
+SERVER_REQUEST_QUEUE_SIZE = int(os.environ.get("SAOVS_SERVER_REQUEST_QUEUE_SIZE", "100"))
 ADMIN_STATIC_DIR = Path(__file__).with_name("admin_static")
 CUSTOMIZER_STATIC_DIR = Path(__file__).with_name("customizer_static")
 CUSTOMIZER_CONTENT_DIR = Path(
@@ -159,7 +163,13 @@ ABILITY_CATALOG_CACHE: dict[int, dict[str, object]] | None = None
 def content_root_candidates() -> list[Path]:
     configured = os.environ.get("SAOVS_CONTENT_ROOT")
     if configured:
-        return [Path(configured).resolve()]
+        configured_path = Path(configured).resolve()
+        return [
+            configured_path,
+            configured_path / "data1" / "com.bandainamcoent.saovsww" / "files",
+            configured_path / "data1" / "com.bandaicoent.saovswww" / "files",
+            configured_path / "files",
+        ]
 
     return [
         SERVER_ROOT / "content" / "files",
@@ -205,8 +215,12 @@ SAOVS_NEW_IV = b"FJxIPPhFj8o85u9b"
 DEFAULT_ASSET_BASE = "https://assets-os-login-lab.saovs.com/"
 DEFAULT_ASSET_HOSTS = "assets-os-login-lab.saovs.com,assets-os.saovs.channel.or.jp"
 DEFAULT_AUTH_RESULT_ORIGIN = DEFAULT_ASSET_BASE.rstrip("/")
+DEFAULT_PUBLIC_API_BASE = "https://api-os-login-lab.saovs.com/"
+DEFAULT_PUBLIC_LOGIN_BASE = "https://saovs.com/"
 
 SAOVS_ASSET_BASE = os.environ.get("SAOVS_ASSET_BASE", DEFAULT_ASSET_BASE)
+SAOVS_PUBLIC_API_BASE = os.environ.get("SAOVS_PUBLIC_API_BASE", DEFAULT_PUBLIC_API_BASE).rstrip("/")
+SAOVS_PUBLIC_LOGIN_BASE = os.environ.get("SAOVS_PUBLIC_LOGIN_BASE", DEFAULT_PUBLIC_LOGIN_BASE).rstrip("/")
 SAOVS_ASSET_VER = os.environ.get("SAOVS_ASSET_VER", offline_login_value("assetver", "30000"))
 SAOVS_MASTER_DATA_VER = os.environ.get("SAOVS_MASTER_DATA_VER", offline_login_value("masterver", "202"))
 SAOVS_LOCALIZE_DATA_VER = int(os.environ.get("SAOVS_LOCALIZE_DATA_VER", offline_login_value("localizever", "161")))
@@ -1652,15 +1666,19 @@ def recent_transfer_flow_from_logs() -> dict[str, object]:
     entries = parse_log_entries(read_log_tail())
     chronological = list(reversed(entries))
     timeline: list[dict[str, object]] = []
-    ignored_internal_probe_count = 0
-    set_bnid_after_progress = 0
-    last_progress: dict[str, object] | None = None
-    last_set_bnid: dict[str, object] | None = None
+    internal_probe_count = 0
+    last_real_entry: dict[str, object] | None = None
+    last_check_version: dict[str, object] | None = None
+    last_login_page: dict[str, object] | None = None
+    last_callback: dict[str, object] | None = None
+    last_execute_bnid: dict[str, object] | None = None
+    last_user_login: dict[str, object] | None = None
+    last_payload_route: dict[str, object] | None = None
 
     for entry in chronological:
         remote = str(entry.get("remote") or "").strip().lower()
         if remote in {"", "none"}:
-            ignored_internal_probe_count += 1
+            internal_probe_count += 1
             continue
 
         timestamp = parse_log_timestamp(entry.get("timestamp"))
@@ -1669,12 +1687,22 @@ def recent_transfer_flow_from_logs() -> dict[str, object]:
 
         path = str(entry.get("path") or "")
         lower_path = path.lower()
-        is_set_bnid = "transfer/setbnid" in lower_path
         is_execute_bnid = "transfer/executebnid" in lower_path
         is_check_version = "user/checkversion" in lower_path
         is_callback = lower_path.endswith("test.html") or "test.html?" in lower_path or lower_path.endswith("/callback")
         is_login_page = lower_path.endswith("login.html") or "/bnid/login" in lower_path
-        relevant = is_set_bnid or is_execute_bnid or is_check_version or is_callback or is_login_page
+        is_user_login = lower_path.endswith("user/login")
+        is_payload_route = any(
+            lower_path.endswith(suffix)
+            for suffix in (
+                "ability/index",
+                "character/index",
+                "equipment/index",
+                "party/index",
+                "user/profile",
+            )
+        )
+        relevant = is_execute_bnid or is_check_version or is_callback or is_login_page or is_user_login or is_payload_route
         if not relevant:
             continue
 
@@ -1683,42 +1711,71 @@ def recent_transfer_flow_from_logs() -> dict[str, object]:
             "method": entry.get("method", ""),
             "path": path,
             "remote": entry.get("remote", ""),
+            "host": entry.get("host", ""),
             "status": entry.get("status") or "event",
             "summary": entry.get("summary", ""),
         }
         timeline.append(item)
+        last_real_entry = item
 
-        if is_check_version or is_execute_bnid or is_callback:
-            last_progress = item
-            set_bnid_after_progress = 0
-        elif is_set_bnid:
-            last_set_bnid = item
-            set_bnid_after_progress += 1
+        if is_check_version:
+            last_check_version = item
+        elif is_login_page:
+            last_login_page = item
+        elif is_callback:
+            last_callback = item
+        elif is_execute_bnid:
+            last_execute_bnid = item
+        elif is_user_login:
+            last_user_login = item
+        elif is_payload_route:
+            last_payload_route = item
 
-    latest_progress_at = parse_log_timestamp(last_progress.get("timestamp")) if last_progress else None
-    latest_set_bnid_at = parse_log_timestamp(last_set_bnid.get("timestamp")) if last_set_bnid else None
-    seconds_since_progress = (now - latest_progress_at).total_seconds() if latest_progress_at else None
-    seconds_since_set_bnid = (now - latest_set_bnid_at).total_seconds() if latest_set_bnid_at else None
-    stuck = (
-        set_bnid_after_progress >= TRANSFER_STUCK_SETBNID_COUNT
-        and (seconds_since_set_bnid is None or seconds_since_set_bnid <= TRANSFER_FLOW_WINDOW_SECONDS)
-    )
+    latest_real_at = parse_log_timestamp(last_real_entry.get("timestamp")) if last_real_entry else None
+    latest_user_login_at = parse_log_timestamp(last_user_login.get("timestamp")) if last_user_login else None
+    latest_check_version_at = parse_log_timestamp(last_check_version.get("timestamp")) if last_check_version else None
+    seconds_since_real = (now - latest_real_at).total_seconds() if latest_real_at else None
+    seconds_since_user_login = (now - latest_user_login_at).total_seconds() if latest_user_login_at else None
+    seconds_since_check_version = (now - latest_check_version_at).total_seconds() if latest_check_version_at else None
+
+    status_values = {str(item.get("status") or "") for item in timeline}
+    has_bad_status = any(status and status not in {"event", "200", "302", "304", "206"} for status in status_values)
+    no_real_traffic = not timeline
+    missing_post_transfer_login = bool(last_execute_bnid and not last_user_login)
+    ok = not has_bad_status
+    if no_real_traffic:
+        diagnosis = (
+            "No real phone/game API traffic reached this process in the current window. "
+            "If the game is stuck now, it is probably hitting another process, public HTTPS route, or proxy path."
+        )
+    elif missing_post_transfer_login:
+        diagnosis = (
+            "executeBNID was seen, but no later user/login was seen in this window. "
+            "The game may not have restarted into the transferred account yet, or the public API route may be stale."
+        )
+    elif last_user_login:
+        diagnosis = "Real game flow reached user/login after checkVersion/transfer traffic."
+    elif last_check_version:
+        diagnosis = "Real game traffic reached checkVersion, but no user/login is visible yet in this window."
+    else:
+        diagnosis = "Real login/transfer traffic is visible, but the complete game API sequence has not appeared yet."
+
     return {
-        "ok": not stuck,
+        "ok": ok,
         "windowSeconds": TRANSFER_FLOW_WINDOW_SECONDS,
-        "stuckSetBNIDThreshold": TRANSFER_STUCK_SETBNID_COUNT,
-        "setBNIDAfterLastProgress": set_bnid_after_progress,
-        "lastProgress": last_progress,
-        "lastSetBNID": last_set_bnid,
-        "secondsSinceLastProgress": round(seconds_since_progress, 1) if seconds_since_progress is not None else None,
-        "secondsSinceLastSetBNID": round(seconds_since_set_bnid, 1) if seconds_since_set_bnid is not None else None,
-        "ignoredInternalProbeCount": ignored_internal_probe_count,
+        "internalProbeCount": internal_probe_count,
+        "lastRealEntry": last_real_entry,
+        "lastCheckVersion": last_check_version,
+        "lastLoginPage": last_login_page,
+        "lastCallback": last_callback,
+        "lastExecuteBNID": last_execute_bnid,
+        "lastUserLogin": last_user_login,
+        "lastPayloadRoute": last_payload_route,
+        "secondsSinceLastRealEntry": round(seconds_since_real, 1) if seconds_since_real is not None else None,
+        "secondsSinceLastUserLogin": round(seconds_since_user_login, 1) if seconds_since_user_login is not None else None,
+        "secondsSinceLastCheckVersion": round(seconds_since_check_version, 1) if seconds_since_check_version is not None else None,
         "recentTimeline": timeline[-20:],
-        "diagnosis": (
-            "Repeated transfer/setBNID calls were seen without a later callback, executeBNID, or user/checkVersion."
-            if stuck
-            else "Recent transfer flow has follow-up progress or no repeated stuck setBNID pattern."
-        ),
+        "diagnosis": diagnosis,
     }
 
 
@@ -4907,6 +4964,69 @@ def asset_relative(path: Path) -> str:
         return str(path)
 
 
+def join_public_url(base_url: str, path: str) -> str:
+    return f"{base_url.rstrip('/')}/{path.lstrip('/')}"
+
+
+def public_http_probe(
+    url: str,
+    *,
+    method: str = "GET",
+    headers: dict[str, str] | None = None,
+    data: bytes | None = None,
+    expect_statuses: set[int] | None = None,
+    sample_bytes: int = 512,
+) -> dict[str, object]:
+    started = time.perf_counter()
+    request_info = UrlRequest(
+        url,
+        data=data,
+        headers={
+            "User-Agent": "SAOVS-FullHealth/1.0",
+            "Accept": "*/*",
+            **(headers or {}),
+        },
+        method=method,
+    )
+    expected = expect_statuses or set(range(200, 400))
+    try:
+        with urlopen(request_info, timeout=PUBLIC_PROBE_TIMEOUT_SECONDS) as response:
+            body = response.read(sample_bytes)
+            status = int(response.status)
+            header_names = (
+                "Content-Type",
+                "Content-Length",
+                "Content-Range",
+                "Accept-Ranges",
+                "Cache-Control",
+                "Location",
+            )
+            response_headers = {
+                name: response.headers.get(name, "")
+                for name in header_names
+                if response.headers.get(name) is not None
+            }
+            return {
+                "ok": status in expected,
+                "url": url,
+                "method": method,
+                "status": status,
+                "durationMs": round((time.perf_counter() - started) * 1000.0, 1),
+                "headers": response_headers,
+                "sampleBytes": len(body),
+                "sampleText": body.decode("utf-8", errors="replace"),
+            }
+    except Exception as exc:
+        return {
+            "ok": False,
+            "url": url,
+            "method": method,
+            "durationMs": round((time.perf_counter() - started) * 1000.0, 1),
+            "exception": type(exc).__name__,
+            "error": str(exc),
+        }
+
+
 def health_asset_root_details() -> dict[str, object]:
     details = health_path_details(SAVED_ANDROID_FILES)
     details["ok"] = bool(details["exists"] and details["isDir"] and details["readable"])
@@ -5092,36 +5212,65 @@ def health_critical_asset_details() -> dict[str, object]:
     }
 
 
+def health_public_route_details() -> dict[str, object]:
+    api_probe = public_http_probe(
+        join_public_url(SAOVS_PUBLIC_API_BASE, "/api/user/checkVersion"),
+        expect_statuses={200},
+        sample_bytes=256,
+    )
+    login_probe = public_http_probe(
+        join_public_url(SAOVS_PUBLIC_LOGIN_BASE, "/login.html?redirect_uri=test.html"),
+        expect_statuses={200},
+        sample_bytes=4096,
+    )
+    login_text = str(login_probe.get("sampleText") or "")
+    login_probe["hasLoginForm"] = "SAOVS Login" in login_text and "name=\"email\"" in login_text
+
+    asset_probes = [
+        public_http_probe(
+            join_public_url(SAOVS_ASSET_BASE, asset_path),
+            headers={"Range": "bytes=0-0"},
+            expect_statuses={206},
+            sample_bytes=32,
+        )
+        for asset_path in ("sword.db", "localize_sword.db", "user_list.db")
+    ]
+    for probe in asset_probes:
+        headers = probe.get("headers") if isinstance(probe.get("headers"), dict) else {}
+        probe["rangeOk"] = (
+            int(probe.get("status") or 0) == 206
+            and str(headers.get("Content-Range") or "").startswith("bytes 0-0/")
+        )
+
+    api_ok = bool(api_probe.get("ok")) and int(api_probe.get("sampleBytes") or 0) > 0
+    login_ok = bool(login_probe.get("ok")) and bool(login_probe.get("hasLoginForm"))
+    assets_ok = all(bool(item.get("ok")) and bool(item.get("rangeOk")) for item in asset_probes)
+    return {
+        "ok": api_ok and login_ok and assets_ok,
+        "apiBase": SAOVS_PUBLIC_API_BASE,
+        "loginBase": SAOVS_PUBLIC_LOGIN_BASE,
+        "assetBase": SAOVS_ASSET_BASE,
+        "timeoutSeconds": PUBLIC_PROBE_TIMEOUT_SECONDS,
+        "apiCheckVersion": api_probe,
+        "loginPage": login_probe,
+        "assetRanges": asset_probes,
+        "diagnosis": (
+            "Public game domains are reachable and returning the expected API, login, and byte-range asset responses."
+            if api_ok and login_ok and assets_ok
+            else "At least one public game-domain probe failed. If internal checks are green, the stale part is the public HTTPS/proxy/server path."
+        ),
+    }
+
+
 def health_transfer_details() -> dict[str, object]:
     route_names = {
         "transfer_execute_bnid": "transfer_execute_bnid" in app.view_functions,
-        "transfer_set_bnid": "transfer_set_bnid" in app.view_functions,
+        "login_html": "login_html" in app.view_functions,
+        "callback": "callback" in app.view_functions,
+        "user_check_version": "user_check_version" in app.view_functions,
+        "user_login": "user_login" in app.view_functions,
         "catch_all": "catch_all" in app.view_functions,
     }
-    with app.test_request_context("/transfer/setBNID", method="GET"):
-        g.request_started_perf = time.perf_counter()
-        g.suppress_request_log = True
-        g.suppress_emit_log = True
-        response = transfer_set_bnid()
-        status_code = response.status_code
-        response.close()
-    with app.test_request_context(
-        "/transfer/setBNID",
-        method="GET",
-        headers={"Host": "saovs.com", "Accept": "text/html"},
-    ):
-        g.request_started_perf = time.perf_counter()
-        g.suppress_request_log = True
-        g.suppress_emit_log = True
-        browser_response = transfer_set_bnid()
-        browser_body = browser_response.get_data(as_text=True)
-        browser_probe = {
-            "status": browser_response.status_code,
-            "contentType": browser_response.content_type,
-            "hasLoginForm": "SAOVS Login" in browser_body and "name=\"password\"" in browser_body,
-            "bodyBytes": len(browser_body.encode("utf-8")),
-        }
-        browser_response.close()
     with app.test_request_context(
         "/login.html?redirect_uri=test.html",
         method="GET",
@@ -5139,19 +5288,60 @@ def health_transfer_details() -> dict[str, object]:
             "bodyBytes": len(login_body.encode("utf-8")),
         }
         login_response.close()
+    with app.test_request_context(
+        "/test.html?code=LOCAL_TRANSFER_CODE",
+        method="GET",
+        headers={"Host": "saovs.com", "Accept": "text/html"},
+    ):
+        g.request_started_perf = time.perf_counter()
+        g.suppress_request_log = True
+        g.suppress_emit_log = True
+        callback_response = callback()
+        callback_body = callback_response.get_data(as_text=True)
+        callback_probe = {
+            "status": callback_response.status_code,
+            "contentType": callback_response.content_type,
+            "hasPuzzleAuth": "puzzle_auth" in callback_body or "auth_result" in callback_body,
+            "bodyBytes": len(callback_body.encode("utf-8")),
+        }
+        callback_response.close()
+    with app.test_request_context(
+        "/api/user/checkVersion",
+        method="GET",
+        headers={"Host": "api-os-login-lab.saovs.com", "Accept": "*/*"},
+    ):
+        g.request_started_perf = time.perf_counter()
+        g.suppress_request_log = True
+        g.suppress_emit_log = True
+        check_version_response = user_check_version()
+        check_version_probe = {
+            "status": check_version_response.status_code,
+            "contentType": check_version_response.content_type,
+            "bodyBytes": len(check_version_response.get_data()),
+        }
+        check_version_response.close()
     return {
         "ok": (
             all(route_names.values())
-            and status_code == 200
-            and browser_probe["status"] == 200
-            and bool(browser_probe["hasLoginForm"])
             and login_probe["status"] == 200
             and bool(login_probe["hasLoginForm"])
+            and callback_probe["status"] == 200
+            and bool(callback_probe["hasPuzzleAuth"])
+            and check_version_probe["status"] == 200
+            and int(check_version_probe["bodyBytes"]) > 0
         ),
         "routes": route_names,
-        "setBNIDProbeStatus": status_code,
-        "setBNIDBrowserProbe": browser_probe,
+        "observedFlow": [
+            "POST /api/user/checkVersion",
+            "GET /login.html",
+            "POST /login.html -> /test.html?code=...",
+            "POST /api/transfer/executeBNID",
+            "POST /api/user/login",
+            "POST /api/*/index",
+        ],
         "loginPageProbe": login_probe,
+        "callbackProbe": callback_probe,
+        "checkVersionProbe": check_version_probe,
         "authCodeTtlSeconds": AUTH_CODE_TTL_SECONDS,
         "sessionActiveSeconds": SESSION_ACTIVE_SECONDS,
         "cryptoKeys": {
@@ -5198,11 +5388,16 @@ def build_full_health_payload() -> dict[str, object]:
                 "logFile": str(LOG_FILE),
                 "logFileExists": LOG_FILE.exists(),
                 "routeSlowSeconds": ROUTE_SLOW_SECONDS,
+                "serverBackend": SERVER_BACKEND,
+                "serverThreads": SERVER_THREADS,
+                "publicApiBase": SAOVS_PUBLIC_API_BASE,
+                "publicLoginBase": SAOVS_PUBLIC_LOGIN_BASE,
             },
         ),
         health_check("database", health_database_details),
         health_check("transfer_dependencies", health_transfer_details),
         health_check("recent_transfer_flow", health_recent_transfer_flow_details),
+        health_check("public_game_routes", health_public_route_details),
         health_check("assets_folder", health_asset_root_details),
         health_check("content_root_detection", health_content_root_detection_details),
         health_check("asset_index", health_asset_index_details),
@@ -5329,6 +5524,41 @@ def catch_all(path: str) -> Response:
     )
 
 
+def run_server(host: str, port: int, ssl_context: tuple[str, str] | None) -> None:
+    backend = SERVER_BACKEND or "auto"
+    if backend in {"auto", "cheroot"}:
+        try:
+            from cheroot.ssl.builtin import BuiltinSSLAdapter
+            from cheroot.wsgi import Server as CherootServer
+        except ImportError:
+            if backend == "cheroot":
+                raise
+            emit_log("[STARTUP] cheroot is not installed; falling back to Flask development server")
+        else:
+            server = CherootServer(
+                (host, port),
+                app,
+                numthreads=SERVER_THREADS,
+                request_queue_size=SERVER_REQUEST_QUEUE_SIZE,
+            )
+            if ssl_context is not None:
+                server.ssl_adapter = BuiltinSSLAdapter(ssl_context[0], ssl_context[1])
+            emit_log(
+                f"[STARTUP] backend=cheroot threads={SERVER_THREADS} "
+                f"request_queue={SERVER_REQUEST_QUEUE_SIZE}"
+            )
+            try:
+                server.start()
+            except KeyboardInterrupt:
+                emit_log("[SHUTDOWN] keyboard interrupt")
+            finally:
+                server.stop()
+            return
+
+    emit_log("[STARTUP] backend=flask-dev threaded=True")
+    app.run(host=host, port=port, debug=False, ssl_context=ssl_context, threaded=True, use_reloader=False)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="SAOVS local login/API debug server")
     parser.add_argument("--host", default="0.0.0.0")
@@ -5348,4 +5578,4 @@ if __name__ == "__main__":
     emit_log(f"[STARTUP] database: {DB_FILE}")
     emit_log(f"[STARTUP] content root: {SAVED_ANDROID_FILES}")
     emit_log(f"[STARTUP] Listening on {scheme}://{args.host}:{args.port}")
-    app.run(host=args.host, port=args.port, debug=False, ssl_context=ssl_context)
+    run_server(args.host, args.port, ssl_context)
