@@ -16,6 +16,7 @@ param(
     [int]$LocalizeDataVer = 161,
     [int]$DefaultUserId = 183705490,
     [int64]$DefaultUserCode = 46841725594,
+    [string]$Backend = "",
     [switch]$HttpOnly
 )
 
@@ -61,6 +62,30 @@ function Get-OriginFromUrl {
     }
 
     return ""
+}
+
+function Resolve-SAOVSContentRoot {
+    param([string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return ""
+    }
+
+    $resolved = [System.IO.Path]::GetFullPath($Path)
+    $candidates = @(
+        $resolved,
+        (Join-Path $resolved "data1\com.bandainamcoent.saovsww\files"),
+        (Join-Path $resolved "data1\com.bandaicoent.saovswww\files"),
+        (Join-Path $resolved "files")
+    )
+
+    foreach ($candidate in $candidates) {
+        if (Test-Path -LiteralPath (Join-Path $candidate "sword.db")) {
+            return $candidate
+        }
+    }
+
+    return $resolved
 }
 
 if ([string]::IsNullOrWhiteSpace($AuthResultOrigin)) {
@@ -122,6 +147,8 @@ if ([string]::IsNullOrWhiteSpace($ContentRoot)) {
     if ([string]::IsNullOrWhiteSpace($ContentRoot)) {
         $ContentRoot = Join-Path $Root "content\files"
     }
+} else {
+    $ContentRoot = Resolve-SAOVSContentRoot -Path $ContentRoot
 }
 
 function Assert-PortAvailable {
@@ -155,6 +182,19 @@ $env:SAOVS_MASTER_DATA_VER = $MasterDataVer
 $env:SAOVS_LOCALIZE_DATA_VER = "$LocalizeDataVer"
 $env:SAOVS_DEFAULT_USER_ID = "$DefaultUserId"
 $env:SAOVS_DEFAULT_USER_CODE = "$DefaultUserCode"
+if ([string]::IsNullOrWhiteSpace($Backend)) {
+    if ([string]::IsNullOrWhiteSpace($env:SAOVS_SERVER_BACKEND)) {
+        $env:SAOVS_SERVER_BACKEND = "cheroot"
+    }
+} else {
+    $env:SAOVS_SERVER_BACKEND = $Backend
+}
+if ([string]::IsNullOrWhiteSpace($env:SAOVS_PUBLIC_API_BASE)) {
+    $env:SAOVS_PUBLIC_API_BASE = "https://api-os-login-lab.saovs.com/"
+}
+if ([string]::IsNullOrWhiteSpace($env:SAOVS_PUBLIC_LOGIN_BASE)) {
+    $env:SAOVS_PUBLIC_LOGIN_BASE = "https://saovs.com/"
+}
 
 Write-Host "SAOVS private server"
 Write-Host "  root:        $Root"
@@ -163,6 +203,9 @@ Write-Host "  database:    $env:SAOVS_DB"
 Write-Host "  asset base:  $AssetBase"
 Write-Host "  asset hosts: $AssetHosts"
 Write-Host "  auth result: $AuthResultOrigin"
+Write-Host "  public api:  $env:SAOVS_PUBLIC_API_BASE"
+Write-Host "  public web:  $env:SAOVS_PUBLIC_LOGIN_BASE"
+Write-Host "  backend:     $env:SAOVS_SERVER_BACKEND"
 Write-Host "  versions:    asset=$AssetVer master=$MasterDataVer localize=$LocalizeDataVer"
 Write-Host "  user:        id=$DefaultUserId code=$DefaultUserCode"
 

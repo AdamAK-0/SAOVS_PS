@@ -116,11 +116,16 @@
       const okCount = probes.filter(function (item) { return item.ok; }).length;
       return okCount + " / " + probes.length + " critical assets serving byte ranges";
     }
-    if (check.name === "transfer_dependencies" && details.setBNIDBrowserProbe) {
-      return details.setBNIDBrowserProbe.hasLoginForm ? "browser transfer login page renders" : "browser transfer login page missing";
+    if (check.name === "public_game_routes") {
+      return details.diagnosis || "public API/login/asset probes";
+    }
+    if (check.name === "transfer_dependencies" && details.loginPageProbe) {
+      return details.loginPageProbe.hasLoginForm ? "real transfer login/checkVersion probes render" : "transfer login/checkVersion probe missing";
     }
     if (check.name === "recent_transfer_flow") {
-      return details.diagnosis || (details.setBNIDAfterLastProgress + " setBNID calls after progress");
+      const ignored = Number(details.internalProbeCount || 0);
+      const suffix = ignored ? " (" + ignored + " internal probes ignored)" : "";
+      return (details.diagnosis || "recent real game flow") + suffix;
     }
     if (details.path) return details.path;
     if (details.error) return details.error;
