@@ -111,6 +111,14 @@
     if (check.name === "asset_response_headers") {
       return "status " + details.status + ", range " + (details.contentRange || "not used");
     }
+    if (check.name === "critical_asset_routes") {
+      const probes = Array.isArray(details.probes) ? details.probes : [];
+      const okCount = probes.filter(function (item) { return item.ok; }).length;
+      return okCount + " / " + probes.length + " critical assets serving byte ranges";
+    }
+    if (check.name === "transfer_dependencies" && details.setBNIDBrowserProbe) {
+      return details.setBNIDBrowserProbe.hasLoginForm ? "browser transfer login page renders" : "browser transfer login page missing";
+    }
     if (details.path) return details.path;
     if (details.error) return details.error;
     return check.ok ? "ready" : "needs attention";

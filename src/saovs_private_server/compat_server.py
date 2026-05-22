@@ -272,6 +272,11 @@ LOGGER = setup_logging()
 
 
 def emit_log(message: str = "") -> None:
+    try:
+        if getattr(g, "suppress_emit_log", False):
+            return
+    except RuntimeError:
+        pass
     LOGGER.info(message)
 
 
@@ -1547,7 +1552,7 @@ def parse_log_block(lines: list[str], index: int) -> dict[str, object]:
         elif stripped.startswith("[SAOVS RESPONSE KEY] "):
             entry["responseKey"] = stripped.removeprefix("[SAOVS RESPONSE KEY] ").strip()
         elif stripped.startswith("[RESPONSE] "):
-            match = search(r"^\[RESPONSE\]\s+([A-Z]+)\s+(.+?)\s+->\s+(\d+)", stripped)
+            match = search(r"^\[RESPONSE\]\s+(?:type=[a-z]+\s+)?([A-Z]+)\s+(.+?)\s+->\s+(\d+)", stripped)
             if match:
                 entry["method"] = entry["method"] or match.group(1)
                 entry["path"] = entry["path"] or match.group(2)
@@ -2763,6 +2768,9 @@ init_db()
 
 
 def log_request() -> None:
+    if getattr(g, "suppress_request_log", False):
+        return
+
     emit_log("\n================ SAOVS DEBUG REQUEST ================")
     emit_log(f"[TIME] {datetime.now(timezone.utc).isoformat()}")
     emit_log(f"[REMOTE] {request.remote_addr}")
@@ -3311,6 +3319,20 @@ def wants_saovs_frame() -> bool:
         host.endswith("saovs.channel.or.jp")
         or "application/x-msgpack" in content_type
         or request.path.startswith("/api/")
+    )
+
+
+def wants_browser_document() -> bool:
+    if request.method != "GET" or wants_saovs_frame():
+        return False
+
+    accept = request.headers.get("Accept", "").lower()
+    sec_fetch_dest = request.headers.get("Sec-Fetch-Dest", "").lower()
+    user_agent = request.headers.get("User-Agent", "").lower()
+    return (
+        "text/html" in accept
+        or sec_fetch_dest == "document"
+        or ("mozilla" in user_agent and "unityplayer" not in user_agent)
     )
 
 
@@ -4311,6 +4333,11 @@ def transfer_execute_bnid() -> Response:
 def transfer_set_bnid() -> Response:
     try:
         log_request()
+        if wants_browser_document():
+            redirect_uri = request.args.get("redirect_uri") or request.args.get("auth_result") or "test.html"
+            emit_log(f"[TRANSFER] setBNID browser entry; rendering login page redirect_uri={redirect_uri!r}")
+            return render_bnid_login_page(redirect_uri)
+
         emit_log(f"[TRANSFER] setBNID {json.dumps(transfer_context_summary(platform_user_id=current_platform_user_id()))}")
         if wants_saovs_frame():
             return make_saovs_frame_response({})
@@ -4908,6 +4935,7 @@ def health_asset_headers_details() -> dict[str, object]:
     asset_host = sorted(SAOVS_ASSET_HOSTS)[0] if SAOVS_ASSET_HOSTS else "assets-os-login-lab.saovs.com"
     with app.test_request_context(f"/{quote(rel, safe='/')}", method="GET", headers={"Host": asset_host, "Range": "bytes=0-0"}):
         g.request_started_perf = time.perf_counter()
+        g.suppress_emit_log = True
         response = serve_asset_file(rel)
         if response is None:
             return {"ok": False, "error": "Asset route did not handle the known asset."}
@@ -4928,6 +4956,52 @@ def health_asset_headers_details() -> dict[str, object]:
         return details
 
 
+def probe_asset_range_response(asset_path: str) -> dict[str, object]:
+    asset_host = sorted(SAOVS_ASSET_HOSTS)[0] if SAOVS_ASSET_HOSTS else "assets-os-login-lab.saovs.com"
+    with app.test_request_context(
+        f"/{quote(asset_path, safe='/')}",
+        method="GET",
+        headers={"Host": asset_host, "Range": "bytes=0-0"},
+    ):
+        g.request_started_perf = time.perf_counter()
+        g.suppress_request_log = True
+        g.skip_response_log = True
+        g.suppress_emit_log = True
+        response = serve_asset_file(asset_path)
+        if response is None:
+            return {"ok": False, "path": asset_path, "error": "Asset route did not handle this path."}
+
+        details = {
+            "ok": response.status_code == 206 and response.headers.get("Content-Range", "").startswith("bytes 0-0/"),
+            "path": asset_path,
+            "status": response.status_code,
+            "contentLength": response.headers.get("Content-Length", ""),
+            "contentRange": response.headers.get("Content-Range", ""),
+            "acceptRanges": response.headers.get("Accept-Ranges", ""),
+            "etag": bool(response.headers.get("ETag")),
+            "cacheControl": response.headers.get("Cache-Control", ""),
+            "directPassthrough": response.direct_passthrough,
+        }
+        response.close()
+        details["responseClosed"] = True
+        return details
+
+
+def health_critical_asset_details() -> dict[str, object]:
+    probes = [
+        "sword.db",
+        "localize_sword.db",
+        "user_list.db",
+        f"com.unity.addressables/catalog_{SAOVS_ASSET_VER}os.hash",
+        f"com.unity.addressables/catalog_{SAOVS_ASSET_VER}os.json",
+    ]
+    results = [probe_asset_range_response(path) for path in probes]
+    return {
+        "ok": all(bool(item.get("ok")) for item in results),
+        "probes": results,
+    }
+
+
 def health_transfer_details() -> dict[str, object]:
     route_names = {
         "transfer_execute_bnid": "transfer_execute_bnid" in app.view_functions,
@@ -4936,13 +5010,58 @@ def health_transfer_details() -> dict[str, object]:
     }
     with app.test_request_context("/transfer/setBNID", method="GET"):
         g.request_started_perf = time.perf_counter()
+        g.suppress_request_log = True
+        g.suppress_emit_log = True
         response = transfer_set_bnid()
         status_code = response.status_code
         response.close()
+    with app.test_request_context(
+        "/transfer/setBNID",
+        method="GET",
+        headers={"Host": "saovs.com", "Accept": "text/html"},
+    ):
+        g.request_started_perf = time.perf_counter()
+        g.suppress_request_log = True
+        g.suppress_emit_log = True
+        browser_response = transfer_set_bnid()
+        browser_body = browser_response.get_data(as_text=True)
+        browser_probe = {
+            "status": browser_response.status_code,
+            "contentType": browser_response.content_type,
+            "hasLoginForm": "SAOVS Login" in browser_body and "name=\"password\"" in browser_body,
+            "bodyBytes": len(browser_body.encode("utf-8")),
+        }
+        browser_response.close()
+    with app.test_request_context(
+        "/login.html?redirect_uri=test.html",
+        method="GET",
+        headers={"Host": "saovs.com", "Accept": "text/html"},
+    ):
+        g.request_started_perf = time.perf_counter()
+        g.suppress_request_log = True
+        g.suppress_emit_log = True
+        login_response = login_html()
+        login_body = login_response.get_data(as_text=True)
+        login_probe = {
+            "status": login_response.status_code,
+            "contentType": login_response.content_type,
+            "hasLoginForm": "SAOVS Login" in login_body and "name=\"email\"" in login_body,
+            "bodyBytes": len(login_body.encode("utf-8")),
+        }
+        login_response.close()
     return {
-        "ok": all(route_names.values()) and status_code == 200,
+        "ok": (
+            all(route_names.values())
+            and status_code == 200
+            and browser_probe["status"] == 200
+            and bool(browser_probe["hasLoginForm"])
+            and login_probe["status"] == 200
+            and bool(login_probe["hasLoginForm"])
+        ),
         "routes": route_names,
         "setBNIDProbeStatus": status_code,
+        "setBNIDBrowserProbe": browser_probe,
+        "loginPageProbe": login_probe,
         "authCodeTtlSeconds": AUTH_CODE_TTL_SECONDS,
         "sessionActiveSeconds": SESSION_ACTIVE_SECONDS,
         "cryptoKeys": {
@@ -4994,6 +5113,7 @@ def build_full_health_payload() -> dict[str, object]:
         health_check("asset_index", health_asset_index_details),
         health_check("known_small_asset_read", health_small_asset_read_details),
         health_check("asset_response_headers", health_asset_headers_details),
+        health_check("critical_asset_routes", health_critical_asset_details),
         health_check("manifest_or_index_load", health_manifest_details),
     ]
     db_details = next((item.get("details", {}) for item in checks if item.get("name") == "database"), {})
