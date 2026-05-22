@@ -119,6 +119,9 @@
     if (check.name === "transfer_dependencies" && details.setBNIDBrowserProbe) {
       return details.setBNIDBrowserProbe.hasLoginForm ? "browser transfer login page renders" : "browser transfer login page missing";
     }
+    if (check.name === "recent_transfer_flow") {
+      return details.diagnosis || (details.setBNIDAfterLastProgress + " setBNID calls after progress");
+    }
     if (details.path) return details.path;
     if (details.error) return details.error;
     return check.ok ? "ready" : "needs attention";

@@ -93,6 +93,8 @@ ROUTE_SLOW_SECONDS = float(os.environ.get("SAOVS_ROUTE_SLOW_SECONDS", "10"))
 SQLITE_TIMEOUT_SECONDS = float(os.environ.get("SAOVS_SQLITE_TIMEOUT_SECONDS", "10"))
 ASSET_INDEX_TTL_SECONDS = int(os.environ.get("SAOVS_ASSET_INDEX_TTL_SECONDS", "3600"))
 ASSET_MISS_REFRESH_COOLDOWN_SECONDS = int(os.environ.get("SAOVS_ASSET_MISS_REFRESH_COOLDOWN_SECONDS", "30"))
+TRANSFER_FLOW_WINDOW_SECONDS = int(os.environ.get("SAOVS_TRANSFER_FLOW_WINDOW_SECONDS", "900"))
+TRANSFER_STUCK_SETBNID_COUNT = int(os.environ.get("SAOVS_TRANSFER_STUCK_SETBNID_COUNT", "3"))
 ADMIN_STATIC_DIR = Path(__file__).with_name("admin_static")
 CUSTOMIZER_STATIC_DIR = Path(__file__).with_name("customizer_static")
 CUSTOMIZER_CONTENT_DIR = Path(
@@ -1629,6 +1631,86 @@ def summarize_log_entries(entries: list[dict[str, object]]) -> dict[str, object]
         "newest": newest,
         "statusCounts": status_counts,
         "categoryCounts": category_counts,
+    }
+
+
+def parse_log_timestamp(value: object) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def recent_transfer_flow_from_logs() -> dict[str, object]:
+    now = datetime.now(timezone.utc)
+    entries = parse_log_entries(read_log_tail())
+    chronological = list(reversed(entries))
+    timeline: list[dict[str, object]] = []
+    set_bnid_after_progress = 0
+    last_progress: dict[str, object] | None = None
+    last_set_bnid: dict[str, object] | None = None
+
+    for entry in chronological:
+        timestamp = parse_log_timestamp(entry.get("timestamp"))
+        if timestamp and (now - timestamp).total_seconds() > TRANSFER_FLOW_WINDOW_SECONDS:
+            continue
+
+        path = str(entry.get("path") or "")
+        lower_path = path.lower()
+        is_set_bnid = "transfer/setbnid" in lower_path
+        is_execute_bnid = "transfer/executebnid" in lower_path
+        is_check_version = "user/checkversion" in lower_path
+        is_callback = lower_path.endswith("test.html") or "test.html?" in lower_path or lower_path.endswith("/callback")
+        is_login_page = lower_path.endswith("login.html") or "/bnid/login" in lower_path
+        relevant = is_set_bnid or is_execute_bnid or is_check_version or is_callback or is_login_page
+        if not relevant:
+            continue
+
+        item = {
+            "timestamp": entry.get("timestamp", ""),
+            "method": entry.get("method", ""),
+            "path": path,
+            "status": entry.get("status") or "event",
+            "summary": entry.get("summary", ""),
+        }
+        timeline.append(item)
+
+        if is_check_version or is_execute_bnid or is_callback:
+            last_progress = item
+            set_bnid_after_progress = 0
+        elif is_set_bnid:
+            last_set_bnid = item
+            set_bnid_after_progress += 1
+
+    latest_progress_at = parse_log_timestamp(last_progress.get("timestamp")) if last_progress else None
+    latest_set_bnid_at = parse_log_timestamp(last_set_bnid.get("timestamp")) if last_set_bnid else None
+    seconds_since_progress = (now - latest_progress_at).total_seconds() if latest_progress_at else None
+    seconds_since_set_bnid = (now - latest_set_bnid_at).total_seconds() if latest_set_bnid_at else None
+    stuck = (
+        set_bnid_after_progress >= TRANSFER_STUCK_SETBNID_COUNT
+        and (seconds_since_set_bnid is None or seconds_since_set_bnid <= TRANSFER_FLOW_WINDOW_SECONDS)
+    )
+    return {
+        "ok": not stuck,
+        "windowSeconds": TRANSFER_FLOW_WINDOW_SECONDS,
+        "stuckSetBNIDThreshold": TRANSFER_STUCK_SETBNID_COUNT,
+        "setBNIDAfterLastProgress": set_bnid_after_progress,
+        "lastProgress": last_progress,
+        "lastSetBNID": last_set_bnid,
+        "secondsSinceLastProgress": round(seconds_since_progress, 1) if seconds_since_progress is not None else None,
+        "secondsSinceLastSetBNID": round(seconds_since_set_bnid, 1) if seconds_since_set_bnid is not None else None,
+        "recentTimeline": timeline[-20:],
+        "diagnosis": (
+            "Repeated transfer/setBNID calls were seen without a later callback, executeBNID, or user/checkVersion."
+            if stuck
+            else "Recent transfer flow has follow-up progress or no repeated stuck setBNID pattern."
+        ),
     }
 
 
@@ -5073,6 +5155,10 @@ def health_transfer_details() -> dict[str, object]:
     }
 
 
+def health_recent_transfer_flow_details() -> dict[str, object]:
+    return recent_transfer_flow_from_logs()
+
+
 @app.route("/admin/health", methods=["GET"])
 def admin_health() -> Response:
     require_admin()
@@ -5108,6 +5194,7 @@ def build_full_health_payload() -> dict[str, object]:
         ),
         health_check("database", health_database_details),
         health_check("transfer_dependencies", health_transfer_details),
+        health_check("recent_transfer_flow", health_recent_transfer_flow_details),
         health_check("assets_folder", health_asset_root_details),
         health_check("content_root_detection", health_content_root_detection_details),
         health_check("asset_index", health_asset_index_details),
