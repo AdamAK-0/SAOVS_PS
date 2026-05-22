@@ -1652,11 +1652,17 @@ def recent_transfer_flow_from_logs() -> dict[str, object]:
     entries = parse_log_entries(read_log_tail())
     chronological = list(reversed(entries))
     timeline: list[dict[str, object]] = []
+    ignored_internal_probe_count = 0
     set_bnid_after_progress = 0
     last_progress: dict[str, object] | None = None
     last_set_bnid: dict[str, object] | None = None
 
     for entry in chronological:
+        remote = str(entry.get("remote") or "").strip().lower()
+        if remote in {"", "none"}:
+            ignored_internal_probe_count += 1
+            continue
+
         timestamp = parse_log_timestamp(entry.get("timestamp"))
         if timestamp and (now - timestamp).total_seconds() > TRANSFER_FLOW_WINDOW_SECONDS:
             continue
@@ -1676,6 +1682,7 @@ def recent_transfer_flow_from_logs() -> dict[str, object]:
             "timestamp": entry.get("timestamp", ""),
             "method": entry.get("method", ""),
             "path": path,
+            "remote": entry.get("remote", ""),
             "status": entry.get("status") or "event",
             "summary": entry.get("summary", ""),
         }
@@ -1705,6 +1712,7 @@ def recent_transfer_flow_from_logs() -> dict[str, object]:
         "lastSetBNID": last_set_bnid,
         "secondsSinceLastProgress": round(seconds_since_progress, 1) if seconds_since_progress is not None else None,
         "secondsSinceLastSetBNID": round(seconds_since_set_bnid, 1) if seconds_since_set_bnid is not None else None,
+        "ignoredInternalProbeCount": ignored_internal_probe_count,
         "recentTimeline": timeline[-20:],
         "diagnosis": (
             "Repeated transfer/setBNID calls were seen without a later callback, executeBNID, or user/checkVersion."

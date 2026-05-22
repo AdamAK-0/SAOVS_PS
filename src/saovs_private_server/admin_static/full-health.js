@@ -120,7 +120,9 @@
       return details.setBNIDBrowserProbe.hasLoginForm ? "browser transfer login page renders" : "browser transfer login page missing";
     }
     if (check.name === "recent_transfer_flow") {
-      return details.diagnosis || (details.setBNIDAfterLastProgress + " setBNID calls after progress");
+      const ignored = Number(details.ignoredInternalProbeCount || 0);
+      const suffix = ignored ? " (" + ignored + " internal probes ignored)" : "";
+      return (details.diagnosis || (details.setBNIDAfterLastProgress + " setBNID calls after progress")) + suffix;
     }
     if (details.path) return details.path;
     if (details.error) return details.error;
