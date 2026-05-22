@@ -92,6 +92,13 @@ served by the HTTP process while the game uses the HTTPS API/asset process:
 http://127.0.0.1:8000/admin/full-health
 ```
 
+Those outbound HTTPS probes use `certifi` by default
+(`SAOVS_PUBLIC_PROBE_CA_BUNDLE=certifi`) so Python can verify Let's Encrypt
+chains even on hosts with an incomplete local CA store.
+By default the login probe uses the auth/result host from `SAOVS_ASSET_BASE`.
+If you set it to `https://saovs.com/`, that certificate must include
+`saovs.com` in its Subject Alternative Name list.
+
 Open the admin dashboard:
 
 ```text

@@ -11,6 +11,7 @@ import os
 import secrets
 import smtplib
 import sqlite3
+import ssl
 import threading
 import time
 import traceback
@@ -96,6 +97,7 @@ ASSET_MISS_REFRESH_COOLDOWN_SECONDS = int(os.environ.get("SAOVS_ASSET_MISS_REFRE
 TRANSFER_FLOW_WINDOW_SECONDS = int(os.environ.get("SAOVS_TRANSFER_FLOW_WINDOW_SECONDS", "900"))
 TRANSFER_STUCK_SETBNID_COUNT = int(os.environ.get("SAOVS_TRANSFER_STUCK_SETBNID_COUNT", "3"))
 PUBLIC_PROBE_TIMEOUT_SECONDS = float(os.environ.get("SAOVS_PUBLIC_PROBE_TIMEOUT_SECONDS", "8"))
+PUBLIC_PROBE_CA_BUNDLE = os.environ.get("SAOVS_PUBLIC_PROBE_CA_BUNDLE", "certifi").strip()
 SERVER_BACKEND = os.environ.get("SAOVS_SERVER_BACKEND", "auto").strip().lower()
 SERVER_THREADS = int(os.environ.get("SAOVS_SERVER_THREADS", "40"))
 SERVER_REQUEST_QUEUE_SIZE = int(os.environ.get("SAOVS_SERVER_REQUEST_QUEUE_SIZE", "100"))
@@ -216,7 +218,7 @@ DEFAULT_ASSET_BASE = "https://assets-os-login-lab.saovs.com/"
 DEFAULT_ASSET_HOSTS = "assets-os-login-lab.saovs.com,assets-os.saovs.channel.or.jp"
 DEFAULT_AUTH_RESULT_ORIGIN = DEFAULT_ASSET_BASE.rstrip("/")
 DEFAULT_PUBLIC_API_BASE = "https://api-os-login-lab.saovs.com/"
-DEFAULT_PUBLIC_LOGIN_BASE = "https://saovs.com/"
+DEFAULT_PUBLIC_LOGIN_BASE = os.environ.get("SAOVS_AUTH_RESULT_ORIGIN", DEFAULT_AUTH_RESULT_ORIGIN)
 
 SAOVS_ASSET_BASE = os.environ.get("SAOVS_ASSET_BASE", DEFAULT_ASSET_BASE)
 SAOVS_PUBLIC_API_BASE = os.environ.get("SAOVS_PUBLIC_API_BASE", DEFAULT_PUBLIC_API_BASE).rstrip("/")
@@ -4968,6 +4970,31 @@ def join_public_url(base_url: str, path: str) -> str:
     return f"{base_url.rstrip('/')}/{path.lstrip('/')}"
 
 
+def public_probe_ssl_context(url: str) -> tuple[ssl.SSLContext | None, dict[str, object]]:
+    if urlparse(url).scheme.lower() != "https":
+        return None, {"tlsVerification": "not-used"}
+
+    bundle = PUBLIC_PROBE_CA_BUNDLE or "system"
+    details: dict[str, object] = {
+        "tlsVerification": "enabled",
+        "caBundle": bundle,
+    }
+    if bundle.lower() in {"system", "default"}:
+        return ssl.create_default_context(), details
+
+    cafile = bundle
+    if bundle.lower() == "certifi":
+        try:
+            import certifi
+        except ImportError:
+            details["caBundleWarning"] = "certifi is not installed; using Python default CA store"
+            return ssl.create_default_context(), details
+        cafile = certifi.where()
+
+    details["caFile"] = cafile
+    return ssl.create_default_context(cafile=cafile), details
+
+
 def public_http_probe(
     url: str,
     *,
@@ -4978,6 +5005,7 @@ def public_http_probe(
     sample_bytes: int = 512,
 ) -> dict[str, object]:
     started = time.perf_counter()
+    ssl_context, tls_details = public_probe_ssl_context(url)
     request_info = UrlRequest(
         url,
         data=data,
@@ -4990,7 +5018,12 @@ def public_http_probe(
     )
     expected = expect_statuses or set(range(200, 400))
     try:
-        with urlopen(request_info, timeout=PUBLIC_PROBE_TIMEOUT_SECONDS) as response:
+        response_handle = (
+            urlopen(request_info, timeout=PUBLIC_PROBE_TIMEOUT_SECONDS, context=ssl_context)
+            if ssl_context is not None
+            else urlopen(request_info, timeout=PUBLIC_PROBE_TIMEOUT_SECONDS)
+        )
+        with response_handle as response:
             body = response.read(sample_bytes)
             status = int(response.status)
             header_names = (
@@ -5012,6 +5045,7 @@ def public_http_probe(
                 "method": method,
                 "status": status,
                 "durationMs": round((time.perf_counter() - started) * 1000.0, 1),
+                **tls_details,
                 "headers": response_headers,
                 "sampleBytes": len(body),
                 "sampleText": body.decode("utf-8", errors="replace"),
@@ -5022,6 +5056,7 @@ def public_http_probe(
             "url": url,
             "method": method,
             "durationMs": round((time.perf_counter() - started) * 1000.0, 1),
+            **tls_details,
             "exception": type(exc).__name__,
             "error": str(exc),
         }
